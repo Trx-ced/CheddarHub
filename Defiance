@@ -59,20 +59,25 @@ local function safeDisconnectAll()
 	table.clear(Connections)
 end
 
-local LIMBS_TO_NERF = {
-	RightHand = true,
-	LeftHand = true,
+local LIMB_NAMES = {
 	Head = true,
+	LeftHand = true,
+	RightHand = true,
+	LeftLowerArm = true,
+	LeftUpperArm = true,
+	RightLowerArm = true,
+	RightUpperArm = true,
 }
 
-local HB_NAMES_TO_KILL = {
-	RightGrabHB = true,
-	LeftGrabHB = true,
+local HB_NAMES = {
 	BiteHB = true,
 	NapeGrabHB = true,
+	LeftGrabHB = true,
+	RightGrabHB = true,
 }
 
 local function storeBasePartState(part)
+	if not part or not part:IsA("BasePart") then return end
 	if part:GetAttribute("HB_Stored") then return end
 	part:SetAttribute("HB_Stored", true)
 
@@ -97,6 +102,7 @@ local function storeBasePartState(part)
 end
 
 local function restoreBasePartState(part)
+	if not part or not part:IsA("BasePart") then return end
 	if not part:GetAttribute("HB_Stored") then return end
 
 	local sx = part:GetAttribute("HB_OrigSizeX")
@@ -124,59 +130,97 @@ local function restoreBasePartState(part)
 	end
 end
 
-local function findNape(rig)
-	if not rig then return nil end
+local function fixNapePhysics(p)
+	p.CanCollide = false
+	p.CanTouch = true
+	p.CanQuery = true
+	p.Massless = true
+	p.Anchored = false
+	p.AssemblyLinearVelocity = Vector3.zero
+	p.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function gatherNapeParts(rig)
+	local list = {}
+	if not rig then return list end
+
 	for _, d in ipairs(rig:GetDescendants()) do
-		if d:IsA("BasePart") and d.Name == "Nape" then
-			return d
+		if d:IsA("BasePart") and string.find(d.Name, "Nape", 1, true) then
+			list[#list + 1] = d
 		end
 	end
-	return nil
+
+	local serverHB = rig:FindFirstChild("ServerHB", true)
+	if serverHB then
+		for _, d in ipairs(serverHB:GetDescendants()) do
+			if d:IsA("BasePart") and string.find(d.Name, "Nape", 1, true) then
+				list[#list + 1] = d
+			end
+		end
+	end
+
+	return list
+end
+
+local function findNape(rig)
+	local napes = gatherNapeParts(rig)
+	return napes[1]
 end
 
 local function applyNapeToRig(rig)
 	if not (rig and rig:IsA("Model")) then return end
-	local nape = findNape(rig)
-	if not nape then return end
 
-	storeBasePartState(nape)
+	local napes = gatherNapeParts(rig)
+	if #napes == 0 then return end
 
-	if State.NapeEnabled then
-		nape.CanCollide = false
-		nape.CanTouch = true
-		nape.CanQuery = true
-		nape.Massless = true
-		nape.Anchored = false
-
-		local ox = nape:GetAttribute("HB_OrigSizeX")
-		local oy = nape:GetAttribute("HB_OrigSizeY")
-		local oz = nape:GetAttribute("HB_OrigSizeZ")
-		if ox and oy and oz then
-			nape.Size = Vector3.new(ox, oy, oz) * State.NapeMult
+	for i = 1, #napes do
+		local nape = napes[i]
+		if nape and nape.Parent then
+			storeBasePartState(nape)
+			if State.NapeEnabled then
+				local ox = nape:GetAttribute("HB_OrigSizeX")
+				local oy = nape:GetAttribute("HB_OrigSizeY")
+				local oz = nape:GetAttribute("HB_OrigSizeZ")
+				if ox and oy and oz then
+					nape.Size = Vector3.new(ox, oy, oz) * math.clamp(State.NapeMult, 1, 30000)
+				end
+				fixNapePhysics(nape)
+			else
+				restoreBasePartState(nape)
+			end
 		end
-	else
-		restoreBasePartState(nape)
 	end
 end
 
-local function disablePartForScript(part)
-	if not part or not part:IsA("BasePart") then return end
-	if part.Name == "Nape" then return end
-	storeBasePartState(part)
-	part.CanTouch = false
-	part.CanCollide = false
-	part.CanQuery = false
-	part.Massless = true
+local function enforceLimbsAndHB(rig)
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("BasePart") then
+			if LIMB_NAMES[d.Name] or HB_NAMES[d.Name] then
+				d.CanCollide = false
+				d.CanTouch = false
+				d.CanQuery = false
+				if HB_NAMES[d.Name] then
+					d.Transparency = 1
+				end
+			end
+		end
+	end
 end
 
-local function killHB(part)
-	if not part or not part:IsA("BasePart") then return end
-	storeBasePartState(part)
-	part.Size = Vector3.new(0, 0, 0)
-	part.CanTouch = false
-	part.CanCollide = false
-	part.CanQuery = false
-	part.Massless = true
+local function destroyHBs(rig)
+	for _, d in ipairs(rig:GetDescendants()) do
+		if HB_NAMES[d.Name] then
+			if d:IsA("BasePart") then
+				d.CanCollide = false
+				d.CanTouch = false
+				d.CanQuery = false
+				d.Transparency = 1
+			end
+			pcall(function()
+				d:Destroy()
+			end)
+		end
+	end
 end
 
 local function applyDisableGrabHitboxesToRig(rig)
@@ -184,24 +228,14 @@ local function applyDisableGrabHitboxesToRig(rig)
 
 	if not State.DisableGrabHitboxes then
 		for _, d in ipairs(rig:GetDescendants()) do
-			if d:IsA("BasePart") and d.Name ~= "Nape" then
+			if d:IsA("BasePart") and not string.find(d.Name, "Nape", 1, true) then
 				restoreBasePartState(d)
 			end
 		end
 		return
 	end
 
-	for _, d in ipairs(rig:GetDescendants()) do
-		if d:IsA("BasePart") and LIMBS_TO_NERF[d.Name] then
-			disablePartForScript(d)
-		end
-	end
-
-	for _, d in ipairs(rig:GetDescendants()) do
-		if d:IsA("BasePart") and HB_NAMES_TO_KILL[d.Name] then
-			killHB(d)
-		end
-	end
+	enforceLimbsAndHB(rig)
 end
 
 local function patchRig(rig)
@@ -212,7 +246,9 @@ end
 local function patchAllTitans()
 	patchRig(TemplateRig)
 	for _, rig in ipairs(TitansFolder:GetChildren()) do
-		patchRig(rig)
+		if rig:IsA("Model") then
+			patchRig(rig)
+		end
 	end
 end
 
@@ -220,11 +256,31 @@ patchAllTitans()
 
 track(TitansFolder.ChildAdded:Connect(function(rig)
 	task.wait(0.15)
-	patchRig(rig)
-	task.delay(0.75, function()
+	if rig and rig:IsA("Model") then
 		patchRig(rig)
-	end)
+		task.delay(0.75, function()
+			if rig and rig.Parent then
+				patchRig(rig)
+			end
+		end)
+	end
 end))
+
+task.spawn(function()
+	while not unloaded do
+		if State.DisableGrabHitboxes then
+			for _, m in ipairs(TitansFolder:GetChildren()) do
+				if m:IsA("Model") then
+					enforceLimbsAndHB(m)
+					destroyHBs(m)
+				end
+			end
+			task.wait(0.1)
+		else
+			task.wait(0.25)
+		end
+	end
+end)
 
 local function getRoot()
 	local char = player.Character
@@ -319,24 +375,6 @@ local function espApplyTitanTransparency()
 		end
 	end
 end
-
-for _, rig in ipairs(TitansFolder:GetChildren()) do
-	if State.TitanESP then
-		espAttachTitan(rig)
-	end
-end
-
-track(TitansFolder.ChildAdded:Connect(function(rig)
-	task.wait(0.15)
-	if State.TitanESP then
-		espAttachTitan(rig)
-	end
-	task.delay(0.75, function()
-		if State.TitanESP then
-			espAttachTitan(rig)
-		end
-	end)
-end))
 
 track(RunService.RenderStepped:Connect(function()
 	if not State.TitanESP then return end
@@ -520,8 +558,6 @@ local function applyPlayerExpandToModel(model, plrName)
 		storeBasePartState(head)
 		if State.PlayerHeadExpandEnabled then
 			head.CanCollide = false
-			head.CanTouch = head.CanTouch
-			head.CanQuery = head.CanQuery
 			head.Massless = true
 			head.Anchored = false
 			local ox = head:GetAttribute("HB_OrigSizeX")
@@ -539,8 +575,6 @@ local function applyPlayerExpandToModel(model, plrName)
 		storeBasePartState(torso)
 		if State.PlayerTorsoExpandEnabled then
 			torso.CanCollide = false
-			torso.CanTouch = torso.CanTouch
-			torso.CanQuery = torso.CanQuery
 			torso.Massless = true
 			torso.Anchored = false
 			local ox = torso:GetAttribute("HB_OrigSizeX")
@@ -951,14 +985,6 @@ do
 		return v / m
 	end
 
-	local function clampMagnitude(v, maxMag)
-		local m = v.Magnitude
-		if m > maxMag then
-			return safeUnit(v) * maxMag
-		end
-		return v
-	end
-
 	local function resolveCharacterModel()
 		if player.Character and player.Character.Parent then
 			return player.Character
@@ -972,17 +998,6 @@ do
 		local byName = charsFolder:FindFirstChild(player.Name)
 		if byName and byName:IsA("Model") then
 			return byName
-		end
-
-		local pn = string.lower(player.Name)
-		local dn = string.lower(player.DisplayName)
-		for _, m in ipairs(charsFolder:GetChildren()) do
-			if m:IsA("Model") and m:FindFirstChild("HumanoidRootPart") and m:FindFirstChildOfClass("Humanoid") then
-				local n = string.lower(m.Name)
-				if n == pn or n == dn or string.find(n, pn, 1, true) or string.find(n, dn, 1, true) then
-					return m
-				end
-			end
 		end
 
 		for _, m in ipairs(charsFolder:GetChildren()) do
@@ -1343,8 +1358,8 @@ local function keyName(kc)
 end
 
 local boxA = sectionBox(pageMain, 16, 16, 460, 340, "Titan Settings")
-local napeToggle = toggleRow(boxA, 44, "Nape Hitbox")
-local grabHBtoggle = toggleRow(boxA, 78, "Disable Grab Hitboxes")
+local napeToggle = toggleRow(boxA, 44, "Nape Hitbox (Nape + ServerHB)")
+local grabHBtoggle = toggleRow(boxA, 78, "Disable Grab Hitboxes (V2)")
 
 mk("TextLabel", {
 	Parent = boxA,
