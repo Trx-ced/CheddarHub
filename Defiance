@@ -551,6 +551,14 @@ end
 local function applyPlayerExpandToModel(model, plrName)
 	if not (model and model:IsA("Model")) then return end
 
+		if plrName == player.Name then
+		local head = getPlrHead(model, plrName)
+		local torso = getPlrTorso(model)
+		if head then restoreBasePartState(head) end
+		if torso then restoreBasePartState(torso) end
+		return
+	end
+
 	local head = getPlrHead(model, plrName)
 	local torso = getPlrTorso(model)
 
@@ -591,9 +599,19 @@ end
 
 local function applyPlayerExpandAll()
 	for _, plr in ipairs(Players:GetPlayers()) do
-		local model = resolvePlayerModel(plr)
-		if model then
-			applyPlayerExpandToModel(model, plr.Name)
+		if plr ~= player then
+			local model = resolvePlayerModel(plr)
+			if model then
+				applyPlayerExpandToModel(model, plr.Name)
+			end
+		else
+			local model = resolvePlayerModel(plr)
+			if model then
+				local head = getPlrHead(model, plr.Name)
+				local torso = getPlrTorso(model)
+				if head then restoreBasePartState(head) end
+				if torso then restoreBasePartState(torso) end
+			end
 		end
 	end
 end
