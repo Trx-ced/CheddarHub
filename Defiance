@@ -565,7 +565,7 @@ local function applyPlayerExpandToModel(model, plrName)
 	if head then
 		storeBasePartState(head)
 		if State.PlayerHeadExpandEnabled then
-			head.CanCollide = false
+			head.CanCollide = true
 			head.Massless = true
 			head.Anchored = false
 			head.CanTouch = true
@@ -583,7 +583,7 @@ local function applyPlayerExpandToModel(model, plrName)
 	if torso then
 		storeBasePartState(torso)
 		if State.PlayerTorsoExpandEnabled then
-			torso.CanCollide = false
+			torso.CanCollide = true
 			torso.Massless = true
 			torso.Anchored = false
 			torso.CanTouch = true
