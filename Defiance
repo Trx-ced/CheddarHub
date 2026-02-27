@@ -565,7 +565,7 @@ local function applyPlayerExpandToModel(model, plrName)
 	if head then
 		storeBasePartState(head)
 		if State.PlayerHeadExpandEnabled then
-			head.CanCollide = false
+			head.CanCollide = true
 			head.Massless = true
 			head.Anchored = false
 			local ox = head:GetAttribute("HB_OrigSizeX")
@@ -582,7 +582,7 @@ local function applyPlayerExpandToModel(model, plrName)
 	if torso then
 		storeBasePartState(torso)
 		if State.PlayerTorsoExpandEnabled then
-			torso.CanCollide = false
+			torso.CanCollide = true
 			torso.Massless = true
 			torso.Anchored = false
 			local ox = torso:GetAttribute("HB_OrigSizeX")
