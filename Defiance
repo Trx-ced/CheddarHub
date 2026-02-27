@@ -131,7 +131,7 @@ local function restoreBasePartState(part)
 end
 
 local function fixNapePhysics(p)
-	p.CanCollide = true
+	p.CanCollide = false
 	p.CanTouch = true
 	p.CanQuery = true
 	p.Massless = true
