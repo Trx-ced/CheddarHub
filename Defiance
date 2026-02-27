@@ -61,12 +61,14 @@ end
 
 local LIMB_NAMES = {
 	Head = true,
-	LeftHand = true,
-	RightHand = true,
-	LeftLowerArm = true,
-	LeftUpperArm = true,
-	RightLowerArm = true,
-	RightUpperArm = true,
+	UpperTorso = true,
+	LowerTorso = true,
+	HumanoidRootPart = true,
+	NeckBone = true,
+	UpperJaw = true,
+	LowerJaw = true,
+	UpperTeeth = true,
+	LowerTeeth = true,
 }
 
 local HB_NAMES = {
@@ -1236,7 +1238,7 @@ mk("TextLabel", {
 	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = COL_SUB,
-	Text = "RightShift to toggle UI",
+	Text = "LeftAlt to toggle UI",
 })
 
 local closeBtn = mk("TextButton", {
@@ -1789,7 +1791,7 @@ mk("TextLabel", {
 	TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = COL_SUB,
-	Text = "Toggle Keybind: RightShift",
+	Text = "Toggle Keybind: LeftAlt",
 })
 
 local resetPos = mk("TextButton", {
@@ -2287,7 +2289,7 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 		return
 	end
 
-	if input.KeyCode == Enum.KeyCode.RightShift then
+	if input.KeyCode == Enum.KeyCode.LeftAlt then
 		gui.Enabled = not gui.Enabled
 		return
 	end
