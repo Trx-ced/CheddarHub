@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-
+local TeleportService = game:GetService("TeleportService")
 local player = Players.LocalPlayer
 
 local TitansFolder = workspace:WaitForChild("TitanLive")
@@ -41,6 +41,9 @@ local State = {
 	VelocityMult = 1.05,
 	VelocityAddSpeed = 0,
 	VelocityMaxSpeed = 250
+	AntiWipeEnabled = false,
+	AntiWipePlaceId = 88161451720504,
+	AntiWipeKey = Enum.KeyCode.J,
 }
 
 local Connections = {}
@@ -58,6 +61,81 @@ local function safeDisconnectAll()
 	end
 	table.clear(Connections)
 end
+
+local bindingAntiWipe = false
+local function doAntiWipeRejoin()
+	pcall(function()
+		TeleportService:Teleport(State.AntiWipePlaceId, player)
+	end)
+end
+
+local function refreshAntiWipeBindText()
+	antiWipeBindBtn.Text = "Keybind: " .. keyName(State.AntiWipeKey) .. (bindingAntiWipe and " (Press a key...)" or " (Click to set)")
+end
+
+track(antiWipeToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.AntiWipeEnabled = not State.AntiWipeEnabled
+	refresh()
+end))
+
+track(antiWipeBindBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	bindingAntiWipe = not bindingAntiWipe
+	refresh()
+end))
+
+track(antiWipeBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	if State.AntiWipeEnabled then
+		doAntiWipeRejoin()
+	end
+end))
+
+if bindingAntiWipe then
+	if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+		State.AntiWipeKey = input.KeyCode
+		bindingAntiWipe = false
+		refresh()
+	end
+	return
+end
+
+if State.AntiWipeEnabled and input.KeyCode == State.AntiWipeKey then
+	doAntiWipeRejoin()
+	return
+end
+
+local antiWipeToggle = toggleRow(boxF, 108, "Anti Wipe Rejoin")
+local antiWipeBindBtn = mk("TextButton", {
+	Parent = boxF,
+	Position = UDim2.new(0, 12, 0, 140),
+	Size = UDim2.new(0, 200, 0, 24),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Keybind: J (Click to set)",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = antiWipeBindBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = antiWipeBindBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local antiWipeBtn = mk("TextButton", {
+	Parent = boxF,
+	Position = UDim2.new(0, 224, 0, 140),
+	Size = UDim2.new(0, 218, 0, 24),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "ANTI WIPE REJOIN",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = antiWipeBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = antiWipeBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
 local LIMB_NAMES = {
 	Head = true,
