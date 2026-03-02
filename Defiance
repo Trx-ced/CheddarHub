@@ -30,6 +30,9 @@ local State = {
 	PlayerTorsoExpandEnabled = false,
 	PlayerTorsoMult = 3,
 
+	TitanEyesEnabled = false,
+	TitanEyesMult = 5,
+
 	SafeFallEnabled = false,
 	MinFallTime = 0.5,
 	NearGroundDist = 15,
@@ -240,9 +243,51 @@ local function applyDisableGrabHitboxesToRig(rig)
 	enforceLimbsAndHB(rig)
 end
 
+local function gatherEyeParts(rig)
+	local list = {}
+	if not rig then return list end
+	local eyes = rig:FindFirstChild("Eyes", true)
+	if not eyes then return list end
+	for _, d in ipairs(eyes:GetDescendants()) do
+		if d:IsA("BasePart") then
+			list[#list + 1] = d
+		end
+	end
+	return list
+end
+
+local function applyEyesToRig(rig)
+	if not (rig and rig:IsA("Model")) then return end
+	local parts = gatherEyeParts(rig)
+	if #parts == 0 then return end
+
+	for i = 1, #parts do
+		local p = parts[i]
+		if p and p.Parent then
+			storeBasePartState(p)
+			if State.TitanEyesEnabled then
+				local ox = p:GetAttribute("HB_OrigSizeX")
+				local oy = p:GetAttribute("HB_OrigSizeY")
+				local oz = p:GetAttribute("HB_OrigSizeZ")
+				if ox and oy and oz then
+					p.Size = Vector3.new(ox, oy, oz) * math.clamp(State.TitanEyesMult, 1, 80)
+				end
+				p.CanCollide = false
+				p.CanTouch = true
+				p.CanQuery = true
+				p.Massless = true
+				p.Anchored = false
+			else
+				restoreBasePartState(p)
+			end
+		end
+	end
+end
+
 local function patchRig(rig)
 	applyNapeToRig(rig)
 	applyDisableGrabHitboxesToRig(rig)
+	applyEyesToRig(rig)
 end
 
 local function patchAllTitans()
@@ -553,7 +598,7 @@ end
 local function applyPlayerExpandToModel(model, plrName)
 	if not (model and model:IsA("Model")) then return end
 
-		if plrName == player.Name then
+	if plrName == player.Name then
 		local head = getPlrHead(model, plrName)
 		local torso = getPlrTorso(model)
 		if head then restoreBasePartState(head) end
@@ -1304,6 +1349,7 @@ end
 
 local pageMain = newPage("Main")
 local pageVisuals = newPage("Visuals")
+local pageTitanEyes = newPage("Titan Eyes")
 local pagePlayers = newPage("Players")
 local pageMisc = newPage("Misc")
 local pageUI = newPage("UI Settings")
@@ -1608,6 +1654,50 @@ local espApplyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = espApplyBtn, CornerRadius = UDim.new(0, 8) })
 
+local boxE = sectionBox(pageTitanEyes, 16, 16, 460, 340, "Titan Eyes")
+local eyesToggle = toggleRow(boxE, 44, "Expand Eyes")
+
+mk("TextLabel", {
+	Parent = boxE,
+	Position = UDim2.new(0, 12, 0, 86),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Eyes Multiplier (1-80)",
+})
+
+local eyesMultBox = mk("TextBox", {
+	Parent = boxE,
+	Position = UDim2.new(0, 12, 0, 108),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.TitanEyesMult),
+})
+mk("UICorner", { Parent = eyesMultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = eyesMultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local eyesApplyBtn = mk("TextButton", {
+	Parent = boxE,
+	Position = UDim2.new(0, 322, 0, 108),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = eyesApplyBtn, CornerRadius = UDim.new(0, 8) })
+
 local boxP = sectionBox(pagePlayers, 16, 16, 460, 340, "Players")
 local plrEspToggle = toggleRow(boxP, 44, "Player ESP")
 local headExpandToggle = toggleRow(boxP, 78, "Expand Head")
@@ -1861,9 +1951,10 @@ end
 
 makeSideTab(12, "Main", "Main")
 makeSideTab(56, "Visuals", "Visuals")
-makeSideTab(100, "Players", "Players")
-makeSideTab(144, "Misc", "Misc")
-makeSideTab(188, "UI Settings", "UI Settings")
+makeSideTab(100, "Titan Eyes", "Titan Eyes")
+makeSideTab(144, "Players", "Players")
+makeSideTab(188, "Misc", "Misc")
+makeSideTab(232, "UI Settings", "UI Settings")
 
 local bindingSafeFall = false
 local bindingVel = false
@@ -1902,6 +1993,19 @@ local function applyESPTrans()
 	State.TitanESPBoxTransparency = n
 	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
 	espApplyTitanTransparency()
+end
+
+local function applyEyesConfig()
+	local n = tonumber(eyesMultBox.Text)
+	if not n then
+		eyesMultBox.Text = tostring(State.TitanEyesMult)
+		return
+	end
+	n = math.floor(n + 0.5)
+	n = math.clamp(n, 1, 80)
+	State.TitanEyesMult = n
+	eyesMultBox.Text = tostring(State.TitanEyesMult)
+	patchAllTitans()
 end
 
 local function applyMinFall()
@@ -1970,6 +2074,8 @@ local function refresh()
 	setToggle(espToggle, State.TitanESP)
 	setToggle(refillToggle, State.RefillESP)
 
+	setToggle(eyesToggle, State.TitanEyesEnabled)
+
 	setToggle(plrEspToggle, State.PlayerESP)
 	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
 	setToggle(torsoExpandToggle, State.PlayerTorsoExpandEnabled)
@@ -1979,6 +2085,7 @@ local function refresh()
 
 	multBox.Text = tostring(State.NapeMult)
 	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
+	eyesMultBox.Text = tostring(State.TitanEyesMult)
 	minFallBox.Text = tostring(State.MinFallTime)
 	nearGroundBox.Text = tostring(State.NearGroundDist)
 
@@ -2011,6 +2118,7 @@ local function unload()
 	State.PlayerESP = false
 	State.SafeFallEnabled = false
 	State.VelocityEnabled = false
+	State.TitanEyesEnabled = false
 	espDetachAllTitans()
 	detachAllRefillESP()
 	detachAllPlayerESP()
@@ -2076,6 +2184,25 @@ track(refillToggle.MouseButton1Click:Connect(function()
 	else
 		detachAllRefillESP()
 	end
+	refresh()
+end))
+
+track(eyesToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.TitanEyesEnabled = not State.TitanEyesEnabled
+	patchAllTitans()
+	refresh()
+end))
+
+track(eyesApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyEyesConfig()
+	refresh()
+end))
+
+track(eyesMultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyEyesConfig()
 	refresh()
 end))
 
