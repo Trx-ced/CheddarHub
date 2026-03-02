@@ -245,14 +245,22 @@ end
 
 local function gatherEyeParts(rig)
 	local list = {}
-	if not rig then return list end
-	local eyes = rig:FindFirstChild("Eyes", true)
-	if not eyes then return list end
-	for _, d in ipairs(eyes:GetDescendants()) do
+	if not (rig and rig:IsA("Model")) then return list end
+
+	local direct = rig:FindFirstChild("Eyes", true)
+	if direct and direct:IsA("BasePart") then
+		list[#list + 1] = direct
+		return list
+	end
+
+	for _, d in ipairs(rig:GetDescendants()) do
 		if d:IsA("BasePart") then
-			list[#list + 1] = d
+			if d.Name == "Eyes" or string.find(d.Name, "Eye", 1, true) then
+				list[#list + 1] = d
+			end
 		end
 	end
+
 	return list
 end
 
