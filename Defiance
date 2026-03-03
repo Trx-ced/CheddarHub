@@ -62,23 +62,19 @@ local function safeDisconnectAll()
 	table.clear(Connections)
 end
 
-local LIMB_NAMES = {
+local AntiGrabTargets = {
 	Head = true,
+	LeftHand = true,
+	LeftLowerArm = true,
+	LeftUpperArm = true,
+	RightHand = true,
+	RightLowerArm = true,
+	RightUpperArm = true,
 	UpperTorso = true,
-	LowerTorso = true,
-	HumanoidRootPart = true,
-	NeckBone = true,
 	UpperJaw = true,
 	LowerJaw = true,
 	UpperTeeth = true,
-	LowerTeeth = true,
-}
-
-local HB_NAMES = {
-	BiteHB = true,
-	NapeGrabHB = true,
-	LeftGrabHB = true,
-	RightGrabHB = true,
+	NeckBone = true
 }
 
 local function storeBasePartState(part)
@@ -230,17 +226,15 @@ end
 
 local function applyDisableGrabHitboxesToRig(rig)
 	if not (rig and rig:IsA("Model")) then return end
+	if not State.DisableGrabHitboxes then return end
 
-	if not State.DisableGrabHitboxes then
-		for _, d in ipairs(rig:GetDescendants()) do
-			if d:IsA("BasePart") and not string.find(d.Name, "Nape", 1, true) then
-				restoreBasePartState(d)
-			end
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("MeshPart") and AntiGrabTargets[d.Name] then
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
 		end
-		return
 	end
-
-	enforceLimbsAndHB(rig)
 end
 
 local function gatherEyeParts(rig)
@@ -324,16 +318,26 @@ end))
 task.spawn(function()
 	while not unloaded do
 		if State.DisableGrabHitboxes then
-			for _, m in ipairs(TitansFolder:GetChildren()) do
-				if m:IsA("Model") then
-					enforceLimbsAndHB(m)
-					destroyHBs(m)
+			for _, d in ipairs(TitansFolder:GetDescendants()) do
+				if d:IsA("MeshPart") and AntiGrabTargets[d.Name] then
+					d.CanCollide = false
+					d.CanTouch = false
+					d.CanQuery = false
 				end
 			end
-			task.wait(0.1)
-		else
-			task.wait(0.25)
+
+			local char = player.Character
+			if char then
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("MeshPart") then
+						d.CanCollide = false
+						d.CanTouch = false
+						d.CanQuery = false
+					end
+				end
+			end
 		end
+		task.wait(0.2)
 	end
 end)
 
