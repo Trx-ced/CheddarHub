@@ -45,6 +45,11 @@ local State = {
 	VelocityMult = 1.05,
 	VelocityAddSpeed = 0,
 	VelocityMaxSpeed = 250
+	VelocityV2Enabled = false,
+	VelocityV2Key = Enum.KeyCode.H,
+	VelocityV2Mult = 1.15,
+	VelocityV2AddSpeed = 45,
+	VelocityV2MaxSpeed = 400
 }
 
 local Connections = {}
@@ -1328,6 +1333,159 @@ do
 	end))
 end
 
+local VelocityBoostV2 = {}
+do
+	local APPLY_RATE = 0.02
+
+	local enabled = false
+	local holding = false
+	local holdKey = Enum.KeyCode.H
+
+	local basePlanarSpeed = 0
+	local lastTargetSpeed = 0
+	local acc = 0
+
+	local function clamp(n, a, b)
+		if n < a then return a end
+		if n > b then return b end
+		return n
+	end
+
+	local function isFiniteNumber(x)
+		return x == x and x ~= math.huge and x ~= -math.huge
+	end
+
+	local function isFiniteVector(v)
+		return isFiniteNumber(v.X) and isFiniteNumber(v.Y) and isFiniteNumber(v.Z)
+	end
+
+	local function planar(v)
+		return Vector3.new(v.X, 0, v.Z)
+	end
+
+	local function safeUnit(v, fallback)
+		local m = v.Magnitude
+		if m > 1e-4 then return v / m end
+		return fallback
+	end
+
+	local function desiredDirection(hum, hrp)
+		local md = hum.MoveDirection
+		if md.Magnitude > 0.05 then
+			return safeUnit(Vector3.new(md.X, 0, md.Z), Vector3.new(0,0,-1))
+		end
+
+		local cam = Workspace.CurrentCamera
+		if cam then
+			local look = cam.CFrame.LookVector
+			local p = Vector3.new(look.X, 0, look.Z)
+			if p.Magnitude > 0.05 then
+				return p.Unit
+			end
+		end
+
+		local look = hrp.CFrame.LookVector
+		local p = Vector3.new(look.X, 0, look.Z)
+		if p.Magnitude > 0.05 then
+			return p.Unit
+		end
+
+		return Vector3.new(0,0,-1)
+	end
+
+	local function snapshotBase(hrp)
+		local v = hrp.AssemblyLinearVelocity
+		if not isFiniteVector(v) then
+			basePlanarSpeed = 0
+			return
+		end
+		basePlanarSpeed = planar(v).Magnitude
+	end
+
+	local function apply(hrp, hum)
+		local v = hrp.AssemblyLinearVelocity
+		if not isFiniteVector(v) then return end
+
+		local vPlanar = planar(v)
+		local spd = vPlanar.Magnitude
+		local dir = desiredDirection(hum, hrp)
+
+		local mult = clamp(tonumber(State.VelocityV2Mult) or 1, 0, 5)
+		local add = clamp(tonumber(State.VelocityV2AddSpeed) or 0, -400, 400)
+		local maxS = clamp(tonumber(State.VelocityV2MaxSpeed) or 0, 0, 4000)
+
+		local targetSpeed = clamp(basePlanarSpeed * mult + add, 0, maxS)
+		lastTargetSpeed = targetSpeed
+
+		local curDir = safeUnit(vPlanar, dir)
+		local steeredDir = safeUnit(curDir + (dir - curDir) * 0.55, dir)
+
+		local newPlanar = steeredDir * targetSpeed
+		local newVel = Vector3.new(newPlanar.X, v.Y, newPlanar.Z)
+		if isFiniteVector(newVel) then
+			hrp.AssemblyLinearVelocity = newVel
+		end
+
+		if spd < 2 then
+			basePlanarSpeed = planar(hrp.AssemblyLinearVelocity).Magnitude
+		end
+	end
+
+	function VelocityBoostV2.SetEnabled(on)
+		enabled = on and true or false
+	end
+
+	function VelocityBoostV2.GetEnabled()
+		return enabled
+	end
+
+	function VelocityBoostV2.SetKey(kc)
+		holdKey = kc
+	end
+
+	function VelocityBoostV2.GetKey()
+		return holdKey
+	end
+
+	function VelocityBoostV2.InputBegan(kc)
+		if not enabled then return end
+		if kc ~= holdKey then return end
+		local char = player.Character
+		if not char then return end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if not hum or not hrp then return end
+		holding = true
+		snapshotBase(hrp)
+	end
+
+	function VelocityBoostV2.InputEnded(kc)
+		if kc ~= holdKey then return end
+		holding = false
+		lastTargetSpeed = 0
+	end
+
+	local stepEvent = RunService.Heartbeat
+	track(stepEvent:Connect(function(dt)
+		if not enabled or not holding then
+			acc = 0
+			return
+		end
+
+		local char = player.Character
+		if not char then return end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if not hum or not hrp then return end
+
+		acc += dt
+		while acc >= APPLY_RATE do
+			acc -= APPLY_RATE
+			apply(hrp, hum)
+		end
+	end))
+end
+
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -1457,6 +1615,7 @@ local function newPage(name)
 end
 
 local pageMain = newPage("Main")
+local pageVelV2 = newPage("Velocity Mult V2")
 local pageVisuals = newPage("Visuals")
 local pageTitanEyes = newPage("Titan Eyes")
 local pagePlayers = newPage("Players")
@@ -1721,6 +1880,120 @@ mk("UICorner", { Parent = velApplyBtn, CornerRadius = UDim.new(0, 8) })
 local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
 local espToggle = toggleRow(boxV, 44, "Titan ESP (Nape)")
 local refillToggle = toggleRow(boxV, 78, "Refill ESP")
+
+local boxVV2 = sectionBox(pageVelV2, 16, 16, 460, 340, "Velocity Mult V2")
+
+local v2Toggle = toggleRow(boxVV2, 44, "Velocity Mult V2")
+
+local v2BindBtn = mk("TextButton", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 12, 0, 76),
+	Size = UDim2.new(0, 260, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Keybind: H (Click to set)",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v2BindBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v2BindBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 12, 0, 112),
+	Size = UDim2.new(0, 150, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Multiplier (0-5x)",
+})
+
+local v2MultBox = mk("TextBox", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 12, 0, 130),
+	Size = UDim2.new(0, 110, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.VelocityV2Mult),
+})
+mk("UICorner", { Parent = v2MultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v2MultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 132, 0, 112),
+	Size = UDim2.new(0, 150, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "AddSpeed (-400..400)",
+})
+
+local v2AddBox = mk("TextBox", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 132, 0, 130),
+	Size = UDim2.new(0, 140, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.VelocityV2AddSpeed),
+})
+mk("UICorner", { Parent = v2AddBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v2AddBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 282, 0, 112),
+	Size = UDim2.new(0, 160, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "MaxSpeed (0-4000)",
+})
+
+local v2MaxBox = mk("TextBox", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 282, 0, 130),
+	Size = UDim2.new(0, 130, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.VelocityV2MaxSpeed),
+})
+mk("UICorner", { Parent = v2MaxBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v2MaxBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local v2ApplyBtn = mk("TextButton", {
+	Parent = boxVV2,
+	Position = UDim2.new(0, 416, 0, 130),
+	Size = UDim2.new(0, 36, 0, 22),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	Text = "OK",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v2ApplyBtn, CornerRadius = UDim.new(0, 8) })
 
 mk("TextLabel", {
 	Parent = boxV,
@@ -2065,9 +2338,11 @@ makeSideTab(100, "Titan Eyes", "Titan Eyes")
 makeSideTab(144, "Players", "Players")
 makeSideTab(188, "Misc", "Misc")
 makeSideTab(232, "UI Settings", "UI Settings")
+makeSideTab(276, "Velocity Mult V2", "Velocity Mult V2")
 
 local bindingSafeFall = false
 local bindingVel = false
+local bindingVelV2 = false
 
 local function refreshBindText()
 	bindBtn.Text = "Keybind: " .. keyName(State.SafeFallKey) .. (bindingSafeFall and " (Press a key...)" or " (Click to set)")
@@ -2091,6 +2366,30 @@ local function applyMultiplier()
 	n = math.clamp(n, 1, 30)
 	State.NapeMult = n
 	patchAllTitans()
+end
+
+local function refreshV2BindText()
+	v2BindBtn.Text = "Keybind: " .. keyName(State.VelocityV2Key) .. (bindingVelV2 and " (Press a key...)" or " (Click to set)")
+end
+
+local function applyVelV2Config()
+	local m = tonumber(v2MultBox.Text)
+	if not m then m = State.VelocityV2Mult end
+	m = math.clamp(m, 0, 5)
+	State.VelocityV2Mult = m
+	v2MultBox.Text = tostring(State.VelocityV2Mult)
+
+	local a = tonumber(v2AddBox.Text)
+	if not a then a = State.VelocityV2AddSpeed end
+	a = math.clamp(a, -400, 400)
+	State.VelocityV2AddSpeed = a
+	v2AddBox.Text = tostring(State.VelocityV2AddSpeed)
+
+	local ms = tonumber(v2MaxBox.Text)
+	if not ms then ms = State.VelocityV2MaxSpeed end
+	ms = math.clamp(ms, 0, 4000)
+	State.VelocityV2MaxSpeed = ms
+	v2MaxBox.Text = tostring(State.VelocityV2MaxSpeed)
 end
 
 local function applyESPTrans()
@@ -2183,8 +2482,18 @@ local function refresh()
 
 	setToggle(espToggle, State.TitanESP)
 	setToggle(refillToggle, State.RefillESP)
-
+	setToggle(v2Toggle, State.VelocityV2Enabled)
+	v2MultBox.Text = tostring(State.VelocityV2Mult)
+	v2AddBox.Text = tostring(State.VelocityV2AddSpeed)
+	v2MaxBox.Text = tostring(State.VelocityV2MaxSpeed)
+	refreshV2BindText()
+	VelocityBoostV2.SetEnabled(State.VelocityV2Enabled)
+	VelocityBoostV2.SetKey(State.VelocityV2Key)
 	setToggle(eyesToggle, State.TitanEyesEnabled)
+
+		if State.VelocityV2Enabled then
+		State.VelocityEnabled = false
+	end
 
 	setToggle(plrEspToggle, State.PlayerESP)
 	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
@@ -2249,7 +2558,42 @@ end
 track(closeBtn.MouseButton1Click:Connect(function()
 	unload()
 end))
+track(v2Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.VelocityV2Enabled = not State.VelocityV2Enabled
+	VelocityBoostV2.SetEnabled(State.VelocityV2Enabled)
+	refresh()
+end))
 
+track(v2BindBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	bindingVelV2 = not bindingVelV2
+	refresh()
+end))
+
+track(v2ApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyVelV2Config()
+	refresh()
+end))
+
+track(v2MultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyVelV2Config()
+	refresh()
+end))
+
+track(v2AddBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyVelV2Config()
+	refresh()
+end))
+
+track(v2MaxBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyVelV2Config()
+	refresh()
+end))
 track(unloadBtn.MouseButton1Click:Connect(function()
 	unload()
 end))
@@ -2544,6 +2888,20 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 		return
 	end
 
+		if bindingVelV2 then
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+			State.VelocityV2Key = input.KeyCode
+			VelocityBoostV2.SetKey(State.VelocityV2Key)
+			bindingVelV2 = false
+			refresh()
+		end
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		VelocityBoostV2.InputBegan(input.KeyCode)
+	end
+
 	if input.KeyCode == Enum.KeyCode.LeftAlt then
 		gui.Enabled = not gui.Enabled
 		return
@@ -2570,6 +2928,10 @@ track(UserInputService.InputEnded:Connect(function(input, gp)
 
 	if input.KeyCode == Enum.KeyCode.H then
 		VelocityBoost.SetHoldingH(false)
+	end
+
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		VelocityBoostV2.InputEnded(input.KeyCode)
 	end
 
 	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
