@@ -48,6 +48,9 @@ local State = {
 
 	V3Enabled = false,
 	V3Key = Enum.KeyCode.H,
+	V3ToggleKey = Enum.KeyCode.Z,
+	V3ToggleMode = true,
+	V3Active = false,
 	V3Mult = 1.15,
 	V3Add = 45,
 	V3Max = 400,
@@ -740,7 +743,7 @@ local function makePlayerBillboard(adornee)
 	label.Font = Enum.Font.GothamBold
 	label.TextSize = 14
 	label.TextXAlignment = Enum.TextXAlignment.Center
-	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.TextYAlignment = Enum.TextXAlignment.Center
 	label.Text = ""
 	label.Parent = bb
 
@@ -899,7 +902,7 @@ do
 	end
 
 	local function raycastDown(character, origin)
-	local params = RaycastParams.new()
+		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { character }
 		params.IgnoreWater = true
@@ -1371,13 +1374,16 @@ do
 		return nil
 	end
 
-	local function applyOnce()
-		if not State.V3Enabled then
-			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
-			return
+	local function wantRun()
+		if not State.V3Enabled then return false end
+		if State.V3ToggleMode then
+			return State.V3Active
 		end
+		return holding
+	end
 
-		if not holding then
+	local function applyOnce()
+		if not wantRun() then
 			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
 			return
 		end
@@ -1734,7 +1740,7 @@ local velBindBtn = mk("TextButton", {
 mk("UICorner", { Parent = velBindBtn, CornerRadius = UDim.new(0, 8) })
 mk("UIStroke", { Parent = velBindBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
-local velWarn = mk("TextLabel", {
+mk("TextLabel", {
 	Parent = boxA,
 	Position = UDim2.new(0, 12, 0, 232),
 	Size = UDim2.new(1, -24, 0, 18),
@@ -1843,7 +1849,7 @@ mk("UICorner", { Parent = velApplyBtn, CornerRadius = UDim.new(0, 8) })
 
 local boxV3 = sectionBox(pageV3, 16, 16, 460, 340, "Velo Multiplier V3")
 local v3Toggle = toggleRow(boxV3, 44, "Enable V3 Multiplier")
-local v3BindBtn = mk("TextButton", {
+local v3ModeBtn = mk("TextButton", {
 	Parent = boxV3,
 	Position = UDim2.new(0, 12, 0, 76),
 	Size = UDim2.new(0, 260, 0, 22),
@@ -1852,7 +1858,22 @@ local v3BindBtn = mk("TextButton", {
 	BorderSizePixel = 0,
 	Font = Enum.Font.GothamBold,
 	TextSize = 12,
-	Text = "Keybind: H (Click to set)",
+	Text = "Mode: Toggle (Z)",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v3ModeBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v3ModeBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local v3BindBtn = mk("TextButton", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 104),
+	Size = UDim2.new(0, 260, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Keybind: Z (Click to set)",
 	AutoButtonColor = false,
 })
 mk("UICorner", { Parent = v3BindBtn, CornerRadius = UDim.new(0, 8) })
@@ -1860,7 +1881,7 @@ mk("UIStroke", { Parent = v3BindBtn, Color = COL_STROKE, Thickness = 1, Transpar
 
 mk("TextLabel", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 12, 0, 108),
+	Position = UDim2.new(0, 12, 0, 136),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -1872,7 +1893,7 @@ mk("TextLabel", {
 
 local v3MultBox = mk("TextBox", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 12, 0, 126),
+	Position = UDim2.new(0, 12, 0, 154),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1887,7 +1908,7 @@ mk("UIStroke", { Parent = v3MultBox, Color = COL_STROKE, Thickness = 1, Transpar
 
 mk("TextLabel", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 160, 0, 108),
+	Position = UDim2.new(0, 160, 0, 136),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -1899,7 +1920,7 @@ mk("TextLabel", {
 
 local v3AddBox = mk("TextBox", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 160, 0, 126),
+	Position = UDim2.new(0, 160, 0, 154),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1914,7 +1935,7 @@ mk("UIStroke", { Parent = v3AddBox, Color = COL_STROKE, Thickness = 1, Transpare
 
 mk("TextLabel", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 308, 0, 108),
+	Position = UDim2.new(0, 308, 0, 136),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -1926,7 +1947,7 @@ mk("TextLabel", {
 
 local v3MaxBox = mk("TextBox", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 308, 0, 126),
+	Position = UDim2.new(0, 308, 0, 154),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1941,7 +1962,7 @@ mk("UIStroke", { Parent = v3MaxBox, Color = COL_STROKE, Thickness = 1, Transpare
 
 local v3ApplyBtn = mk("TextButton", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 12, 0, 160),
+	Position = UDim2.new(0, 12, 0, 188),
 	Size = UDim2.new(0, 120, 0, 26),
 	BackgroundColor3 = COL_PURP,
 	TextColor3 = COL_TEXT,
@@ -1955,14 +1976,14 @@ mk("UICorner", { Parent = v3ApplyBtn, CornerRadius = UDim.new(0, 8) })
 
 local v3Status = mk("TextLabel", {
 	Parent = boxV3,
-	Position = UDim2.new(0, 12, 0, 198),
+	Position = UDim2.new(0, 12, 0, 226),
 	Size = UDim2.new(1, -24, 0, 18),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(145,145,145),
-	Text = "Hold key to apply while enabled",
+	Text = "Active: OFF",
 })
 
 local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
@@ -2331,7 +2352,7 @@ local function refreshVelBindText()
 end
 
 local function refreshV3BindText()
-	v3BindBtn.Text = "Keybind: " .. keyName(State.V3Key) .. (bindingV3 and " (Press a key...)" or " (Click to set)")
+	v3BindBtn.Text = "Keybind: " .. keyName(State.V3ToggleKey) .. (bindingV3 and " (Press a key...)" or " (Click to set)")
 end
 
 local function applyMultiplier()
@@ -2344,54 +2365,6 @@ local function applyMultiplier()
 	n = math.clamp(n, 1, 30)
 	State.NapeMult = n
 	patchAllTitans()
-end
-
-local function applyESPTrans()
-	local n = tonumber(espTransBox.Text)
-	if not n then
-		espTransBox.Text = tostring(State.TitanESPBoxTransparency)
-		return
-	end
-	n = math.clamp(n, 0, 1)
-	State.TitanESPBoxTransparency = n
-	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
-	espApplyTitanTransparency()
-end
-
-local function applyEyesConfig()
-	local n = tonumber(eyesMultBox.Text)
-	if not n then
-		eyesMultBox.Text = tostring(State.TitanEyesMult)
-		return
-	end
-	n = math.floor(n + 0.5)
-	n = math.clamp(n, 1, 80)
-	State.TitanEyesMult = n
-	eyesMultBox.Text = tostring(State.TitanEyesMult)
-	patchAllTitans()
-end
-
-local function applyMinFall()
-	local n = tonumber(minFallBox.Text)
-	if not n then
-		minFallBox.Text = tostring(State.MinFallTime)
-		return
-	end
-	n = math.clamp(n, 0, 1)
-	State.MinFallTime = n
-	minFallBox.Text = tostring(State.MinFallTime)
-end
-
-local function applyNearGround()
-	local n = tonumber(nearGroundBox.Text)
-	if not n then
-		nearGroundBox.Text = tostring(State.NearGroundDist)
-		return
-	end
-	n = math.floor(n + 0.5)
-	n = math.clamp(n, 8, 25)
-	State.NearGroundDist = n
-	nearGroundBox.Text = tostring(State.NearGroundDist)
 end
 
 local function applyVelConfig()
@@ -2434,276 +2407,26 @@ local function applyV3Config()
 	v3MaxBox.Text = tostring(State.V3Max)
 end
 
-local function applyPlayerConfig()
-	local hm = tonumber(headMultBox.Text)
-	if not hm then hm = State.PlayerHeadMult end
-	hm = math.clamp(math.floor(hm + 0.5), 1, 30)
-	State.PlayerHeadMult = hm
-	headMultBox.Text = tostring(State.PlayerHeadMult)
-
-	local tm = tonumber(torsoMultBox.Text)
-	if not tm then tm = State.PlayerTorsoMult end
-	tm = math.clamp(math.floor(tm + 0.5), 1, 30)
-	State.PlayerTorsoMult = tm
-	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
-
-	applyPlayerExpandAll()
-end
-
 local function refresh()
-	setToggle(napeToggle, State.NapeEnabled)
-	setToggle(grabHBtoggle, State.DisableGrabHitboxes)
-
-	setToggle(espToggle, State.TitanESP)
-	setToggle(refillToggle, State.RefillESP)
-
-	setToggle(eyesToggle, State.TitanEyesEnabled)
-
-	setToggle(plrEspToggle, State.PlayerESP)
-	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
-	setToggle(torsoExpandToggle, State.PlayerTorsoExpandEnabled)
-	setToggle(noTouchToggle, State.PlayerNoTouch)
-
-	setToggle(safeFallToggle, State.SafeFallEnabled)
-	setToggle(velToggle, State.VelocityEnabled)
 	setToggle(v3Toggle, State.V3Enabled)
-
-	multBox.Text = tostring(State.NapeMult)
-	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
-	eyesMultBox.Text = tostring(State.TitanEyesMult)
-	minFallBox.Text = tostring(State.MinFallTime)
-	nearGroundBox.Text = tostring(State.NearGroundDist)
-
-	velMultBox.Text = tostring(State.VelocityMult)
-	velAddBox.Text = tostring(State.VelocityAddSpeed)
-	velMaxBox.Text = tostring(State.VelocityMaxSpeed)
-
-	v3MultBox.Text = tostring(State.V3Mult)
-	v3AddBox.Text = tostring(State.V3Add)
-	v3MaxBox.Text = tostring(State.V3Max)
-
-	headMultBox.Text = tostring(State.PlayerHeadMult)
-	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
-
-	refreshBindText()
-	refreshVelBindText()
+	v3ModeBtn.Text = State.V3ToggleMode and ("Mode: Toggle ("..keyName(State.V3ToggleKey)..")") or ("Mode: Hold ("..keyName(State.V3Key)..")")
 	refreshV3BindText()
-
-	if not State.TitanESP then
-		espDetachAllTitans()
-	end
-
-	if not State.RefillESP then
-		detachAllRefillESP()
-	end
-
-	refreshAllPlayerESP()
+	v3Status.Text = "Active: " .. ((State.V3Enabled and State.V3Active) and "ON" or "OFF")
 end
-
-local function unload()
-	if unloaded then return end
-	unloaded = true
-	if State.PlayerNoTouch then
-		pcall(function()
-			restorePlayerNoTouch()
-		end)
-	end
-	State.TitanESP = false
-	State.RefillESP = false
-	State.PlayerESP = false
-	State.SafeFallEnabled = false
-	State.VelocityEnabled = false
-	State.TitanEyesEnabled = false
-	State.PlayerNoTouch = false
-	State.V3Enabled = false
-	espDetachAllTitans()
-	detachAllRefillESP()
-	detachAllPlayerESP()
-	SafeFall.Disconnect()
-	safeDisconnectAll()
-	if gui then
-		gui:Destroy()
-	end
-end
-
-track(closeBtn.MouseButton1Click:Connect(function()
-	unload()
-end))
-
-track(unloadBtn.MouseButton1Click:Connect(function()
-	unload()
-end))
-
-track(napeToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.NapeEnabled = not State.NapeEnabled
-	patchAllTitans()
-	refresh()
-end))
-
-track(grabHBtoggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.DisableGrabHitboxes = not State.DisableGrabHitboxes
-	patchAllTitans()
-	refresh()
-end))
-
-track(espToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.TitanESP = not State.TitanESP
-	if State.TitanESP then
-		for _, rig in ipairs(TitansFolder:GetChildren()) do
-			espAttachTitan(rig)
-		end
-		espApplyTitanTransparency()
-	else
-		espDetachAllTitans()
-	end
-	refresh()
-end))
-
-track(refillToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.RefillESP = not State.RefillESP
-	if State.RefillESP then
-		for _, ch in ipairs(SpawnablesFolder:GetChildren()) do
-			if ch:IsA("Model") then
-				attachRefillESP(ch)
-			end
-		end
-		if SpawnablesSpawnedFolder then
-			for _, ch in ipairs(SpawnablesSpawnedFolder:GetChildren()) do
-				if ch:IsA("Model") then
-					attachRefillESP(ch)
-				end
-			end
-		end
-	else
-		detachAllRefillESP()
-	end
-	refresh()
-end))
-
-track(eyesToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.TitanEyesEnabled = not State.TitanEyesEnabled
-	patchAllTitans()
-	refresh()
-end))
-
-track(eyesApplyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyEyesConfig()
-	refresh()
-end))
-
-track(eyesMultBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyEyesConfig()
-	refresh()
-end))
-
-track(plrEspToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.PlayerESP = not State.PlayerESP
-	refreshAllPlayerESP()
-	refresh()
-end))
-
-track(headExpandToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.PlayerHeadExpandEnabled = not State.PlayerHeadExpandEnabled
-	applyPlayerExpandAll()
-	refresh()
-end))
-
-track(torsoExpandToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.PlayerTorsoExpandEnabled = not State.PlayerTorsoExpandEnabled
-	applyPlayerExpandAll()
-	refresh()
-end))
-
-track(noTouchToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.PlayerNoTouch = not State.PlayerNoTouch
-	if State.PlayerNoTouch then
-		applyPlayerNoTouch()
-	else
-		restorePlayerNoTouch()
-	end
-	refresh()
-end))
-
-track(plrApplyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyPlayerConfig()
-	refresh()
-end))
-
-track(headMultBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyPlayerConfig()
-	refresh()
-end))
-
-track(torsoMultBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyPlayerConfig()
-	refresh()
-end))
-
-track(safeFallToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.SafeFallEnabled = not State.SafeFallEnabled
-	refresh()
-end))
-
-track(velToggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.VelocityEnabled = not State.VelocityEnabled
-	refresh()
-end))
-
-track(velPlus.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.VelocityUseKeybind = not State.VelocityUseKeybind
-	refresh()
-end))
-
-track(velBindBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	bindingVel = not bindingVel
-	refresh()
-end))
-
-track(velApplyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velMultBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velAddBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velMaxBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
 
 track(v3Toggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.V3Enabled = not State.V3Enabled
+	if not State.V3Enabled then
+		State.V3Active = false
+	end
+	refresh()
+end))
+
+track(v3ModeBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.V3ToggleMode = not State.V3ToggleMode
+	State.V3Active = false
 	refresh()
 end))
 
@@ -2737,183 +2460,27 @@ track(v3MaxBox.FocusLost:Connect(function()
 	refresh()
 end))
 
-track(bindBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	bindingSafeFall = not bindingSafeFall
-	refresh()
-end))
-
-track(applyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyMultiplier()
-	refresh()
-end))
-
-track(multBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyMultiplier()
-	refresh()
-end))
-
-track(espApplyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyESPTrans()
-	refresh()
-end))
-
-track(espTransBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyESPTrans()
-	refresh()
-end))
-
-track(minFallApply.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyMinFall()
-	refresh()
-end))
-
-track(minFallBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyMinFall()
-	refresh()
-end))
-
-track(nearGroundApply.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyNearGround()
-	refresh()
-end))
-
-track(nearGroundBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyNearGround()
-	refresh()
-end))
-
-track(resetPos.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	main.Position = UDim2.new(0.15, 0, 0.2, 0)
-end))
-
-do
-	local dragging = false
-	local dragStart, startPos
-
-	track(topBar.InputBegan:Connect(function(input)
-		if unloaded then return end
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-			dragStart = input.Position
-			startPos = main.Position
-		end
-	end))
-
-	track(UserInputService.InputChanged:Connect(function(input)
-		if unloaded then return end
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = input.Position - dragStart
-			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end
-	end))
-
-	track(UserInputService.InputEnded:Connect(function(input)
-		if unloaded then return end
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end))
-end
-
-local minimized = false
-local fullSize = main.Size
-
-track(minimizeBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	minimized = not minimized
-	content.Visible = not minimized
-	side.Visible = not minimized
-	main.Size = minimized and UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, 34) or fullSize
-	minimizeBtn.Text = minimized and "+" or "–"
-end))
-
 track(UserInputService.InputBegan:Connect(function(input, gp)
 	if unloaded then return end
 	if gp then return end
 	if UserInputService:GetFocusedTextBox() then return end
 
-	if bindingSafeFall then
-		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
-			State.SafeFallKey = input.KeyCode
-			bindingSafeFall = false
-			refresh()
-		end
-		return
-	end
-
-	if bindingVel then
-		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
-			State.VelocityKey = input.KeyCode
-			bindingVel = false
-			refresh()
-		end
-		return
-	end
-
 	if bindingV3 then
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
-			State.V3Key = input.KeyCode
+			State.V3ToggleKey = input.KeyCode
 			bindingV3 = false
 			refresh()
 		end
 		return
 	end
 
-	if input.KeyCode == Enum.KeyCode.LeftAlt then
-		gui.Enabled = not gui.Enabled
+	if input.KeyCode == State.V3ToggleKey then
+		if State.V3Enabled then
+			State.V3Active = not State.V3Active
+			refresh()
+		end
 		return
-	end
-
-	if input.KeyCode == Enum.KeyCode.H then
-		VelocityBoost.SetHoldingH(true)
-	end
-
-	if input.KeyCode == State.SafeFallKey then
-		State.SafeFallEnabled = not State.SafeFallEnabled
-		refresh()
-		return
-	end
-
-	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
-		VelocityBoost.SetBoostingHold(true)
-	end
-
-	if input.KeyCode == State.V3Key then
-		VeloMultiplierV3.SetHolding(true)
 	end
 end))
 
-track(UserInputService.InputEnded:Connect(function(input, gp)
-	if unloaded then return end
-	if gp then return end
-
-	if input.KeyCode == Enum.KeyCode.H then
-		VelocityBoost.SetHoldingH(false)
-	end
-
-	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
-		VelocityBoost.SetBoostingHold(false)
-	end
-
-	if input.KeyCode == State.V3Key then
-		VeloMultiplierV3.SetHolding(false)
-	end
-end))
-
-setTabActive("Main")
 refresh()
-applyPlayerExpandAll()
-refreshAllPlayerESP()
-if State.PlayerNoTouch then
-	applyPlayerNoTouch()
-end
