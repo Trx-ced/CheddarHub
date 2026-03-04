@@ -44,7 +44,15 @@ local State = {
 	VelocityKey = Enum.KeyCode.LeftShift,
 	VelocityMult = 1.05,
 	VelocityAddSpeed = 0,
-	VelocityMaxSpeed = 250
+	VelocityMaxSpeed = 250,
+
+	V3Enabled = false,
+	V3Key = Enum.KeyCode.H,
+	V3Mult = 1.15,
+	V3Add = 45,
+	V3Max = 400,
+	V3Force = Vector3.new(1e9, 1e9, 1e9),
+	V3P = 50000
 }
 
 local Connections = {}
@@ -253,37 +261,6 @@ local function applyNapeToRig(rig)
 			else
 				restoreBasePartState(nape)
 			end
-		end
-	end
-end
-
-local function enforceLimbsAndHB(rig)
-	for _, d in ipairs(rig:GetDescendants()) do
-		if d:IsA("BasePart") then
-			if LIMB_NAMES[d.Name] or HB_NAMES[d.Name] then
-				d.CanCollide = false
-				d.CanTouch = false
-				d.CanQuery = false
-				if HB_NAMES[d.Name] then
-					d.Transparency = 1
-				end
-			end
-		end
-	end
-end
-
-local function destroyHBs(rig)
-	for _, d in ipairs(rig:GetDescendants()) do
-		if HB_NAMES[d.Name] then
-			if d:IsA("BasePart") then
-				d.CanCollide = false
-				d.CanTouch = false
-				d.CanQuery = false
-				d.Transparency = 1
-			end
-			pcall(function()
-				d:Destroy()
-			end)
 		end
 	end
 end
@@ -1308,6 +1285,171 @@ do
 	end))
 end
 
+local VeloMultiplierV3 = {}
+do
+	local holding = false
+	local lastPrint = 0
+	local targetBV = nil
+	local targetHRP = nil
+	local targetModel = nil
+	local lastId = nil
+
+	local function clamp(n, a, b)
+		if n < a then return a end
+		if n > b then return b end
+		return n
+	end
+
+	local function planar(v)
+		return Vector3.new(v.X, 0, v.Z)
+	end
+
+	local function safeUnit(v)
+		local m = v.Magnitude
+		if m <= 1e-6 then return Vector3.zero end
+		return v / m
+	end
+
+	local function getFullPath(inst)
+		local parts = {}
+		local cur = inst
+		while cur do
+			table.insert(parts, 1, cur.Name)
+			cur = cur.Parent
+		end
+		return table.concat(parts, ".")
+	end
+
+	local function resolveTarget()
+		local char = player.Character
+		if char and char.Parent then
+			local hrp = char:FindFirstChild("HumanoidRootPart")
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hrp and hum then
+				return char, hrp
+			end
+		end
+		local live = Workspace:FindFirstChild("Live")
+		if live then
+			local m = live:FindFirstChild(player.Name)
+			if m and m:IsA("Model") then
+				local hrp = m:FindFirstChild("HumanoidRootPart")
+				local hum = m:FindFirstChildOfClass("Humanoid")
+				if hrp and hum then
+					return m, hrp
+				end
+			end
+			local m2 = live:FindFirstChild("heartuchihaleader")
+			if m2 and m2:IsA("Model") then
+				local hrp = m2:FindFirstChild("HumanoidRootPart")
+				local hum = m2:FindFirstChildOfClass("Humanoid")
+				if hrp and hum then
+					return m2, hrp
+				end
+			end
+		end
+		return nil
+	end
+
+	local function findBodyVelocity(rootPart, model)
+		if rootPart then
+			local bv = rootPart:FindFirstChildOfClass("BodyVelocity")
+			if bv then return bv end
+			for _, ch in ipairs(rootPart:GetChildren()) do
+				if ch:IsA("BodyVelocity") then
+					return ch
+				end
+			end
+		end
+		if model then
+			for _, d in ipairs(model:GetDescendants()) do
+				if d:IsA("BodyVelocity") then
+					return d
+				end
+			end
+		end
+		return nil
+	end
+
+	local function applyOnce()
+		if not State.V3Enabled then
+			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
+			return
+		end
+
+		if not holding then
+			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
+			return
+		end
+
+		State.V3Mult = clamp(State.V3Mult, 0, 5)
+		State.V3Add = clamp(State.V3Add, -400, 400)
+		State.V3Max = clamp(State.V3Max, 0, 4000)
+
+		local model, hrp = resolveTarget()
+		if not model or not hrp then return end
+
+		if not targetModel or targetModel ~= model or not targetHRP or targetHRP ~= hrp then
+			targetModel = model
+			targetHRP = hrp
+			targetBV = nil
+			lastId = nil
+		end
+
+		if not targetBV or not targetBV.Parent then
+			targetBV = findBodyVelocity(targetHRP, targetModel)
+			lastId = nil
+		end
+		if not targetBV or not targetBV.Parent then return end
+
+		if targetBV.MaxForce ~= State.V3Force then
+			targetBV.MaxForce = State.V3Force
+		end
+		if targetBV.P ~= State.V3P then
+			targetBV.P = State.V3P
+		end
+
+		local id = targetBV:GetDebugId()
+		if lastId ~= id then
+			lastId = id
+			print("[V3 LOCK]", targetBV.Name, "Path:", getFullPath(targetBV), "MaxForce:", targetBV.MaxForce)
+		end
+
+		local v0 = targetBV.Velocity
+		local h0 = planar(v0)
+		local spd = h0.Magnitude
+
+		local dir = safeUnit(h0)
+		if dir.Magnitude <= 1e-6 then
+			dir = safeUnit(planar(targetHRP.CFrame.LookVector))
+		end
+		if dir.Magnitude <= 1e-6 then
+			return
+		end
+
+		local target = clamp(spd * State.V3Mult + State.V3Add, 0, State.V3Max)
+		local outH = dir * target
+		targetBV.Velocity = Vector3.new(outH.X, v0.Y, outH.Z)
+
+		local now = os.clock()
+		if now - lastPrint >= 0.25 then
+			lastPrint = now
+			local v1 = targetBV.Velocity
+			local read = planar(v1).Magnitude
+			print("[V3 BV]", targetBV.Name, "spd", math.floor(spd), "->", math.floor(target), "read", math.floor(read), "P", targetBV.P, "MaxForce", targetBV.MaxForce)
+		end
+	end
+
+	local stepEvent = RunService.PreSimulation or RunService.Heartbeat
+	track(stepEvent:Connect(function()
+		applyOnce()
+	end))
+
+	function VeloMultiplierV3.SetHolding(on)
+		holding = on
+	end
+end
+
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -1442,6 +1584,7 @@ local pageTitanEyes = newPage("Titan Eyes")
 local pagePlayers = newPage("Players")
 local pageMisc = newPage("Misc")
 local pageUI = newPage("UI Settings")
+local pageV3 = newPage("Velo Multiplier V3")
 
 local function sectionBox(parent, x, y, w, h, headerText)
 	local box = mk("Frame", {
@@ -1697,6 +1840,130 @@ local velApplyBtn = mk("TextButton", {
 	AutoButtonColor = false,
 })
 mk("UICorner", { Parent = velApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local boxV3 = sectionBox(pageV3, 16, 16, 460, 340, "Velo Multiplier V3")
+local v3Toggle = toggleRow(boxV3, 44, "Enable V3 Multiplier")
+local v3BindBtn = mk("TextButton", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 76),
+	Size = UDim2.new(0, 260, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Keybind: H (Click to set)",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v3BindBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v3BindBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 108),
+	Size = UDim2.new(0, 160, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Multiplier (0-5)",
+})
+
+local v3MultBox = mk("TextBox", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 126),
+	Size = UDim2.new(0, 130, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.V3Mult),
+})
+mk("UICorner", { Parent = v3MultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v3MultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 160, 0, 108),
+	Size = UDim2.new(0, 160, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "AddSpeed (-400..400)",
+})
+
+local v3AddBox = mk("TextBox", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 160, 0, 126),
+	Size = UDim2.new(0, 130, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.V3Add),
+})
+mk("UICorner", { Parent = v3AddBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v3AddBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 308, 0, 108),
+	Size = UDim2.new(0, 160, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "MaxSpeed (0-4000)",
+})
+
+local v3MaxBox = mk("TextBox", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 308, 0, 126),
+	Size = UDim2.new(0, 130, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.V3Max),
+})
+mk("UICorner", { Parent = v3MaxBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v3MaxBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local v3ApplyBtn = mk("TextButton", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 160),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v3ApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local v3Status = mk("TextLabel", {
+	Parent = boxV3,
+	Position = UDim2.new(0, 12, 0, 198),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Tap key to toggle while enabled",
+})
 
 local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
 local espToggle = toggleRow(boxV, 44, "Titan ESP (Nape)")
@@ -2045,9 +2312,12 @@ makeSideTab(100, "Titan Eyes", "Titan Eyes")
 makeSideTab(144, "Players", "Players")
 makeSideTab(188, "Misc", "Misc")
 makeSideTab(232, "UI Settings", "UI Settings")
+makeSideTab(276, "Velo Multiplier V3", "Velo Multiplier V3")
 
 local bindingSafeFall = false
 local bindingVel = false
+local bindingV3 = false
+local v3Toggled = false
 
 local function refreshBindText()
 	bindBtn.Text = "Keybind: " .. keyName(State.SafeFallKey) .. (bindingSafeFall and " (Press a key...)" or " (Click to set)")
@@ -2059,6 +2329,10 @@ local function refreshVelBindText()
 	if bindingVel then
 		velBindBtn.Text = "Keybind: (Press a key...)"
 	end
+end
+
+local function refreshV3BindText()
+	v3BindBtn.Text = "Keybind: " .. keyName(State.V3Key) .. (bindingV3 and " (Press a key...)" or " (Click to set)")
 end
 
 local function applyMultiplier()
@@ -2141,6 +2415,26 @@ local function applyVelConfig()
 	velMaxBox.Text = tostring(State.VelocityMaxSpeed)
 end
 
+local function applyV3Config()
+	local m = tonumber(v3MultBox.Text)
+	if not m then m = State.V3Mult end
+	m = math.clamp(m, 0, 5)
+	State.V3Mult = m
+	v3MultBox.Text = tostring(State.V3Mult)
+
+	local a = tonumber(v3AddBox.Text)
+	if not a then a = State.V3Add end
+	a = math.clamp(a, -400, 400)
+	State.V3Add = a
+	v3AddBox.Text = tostring(State.V3Add)
+
+	local ms = tonumber(v3MaxBox.Text)
+	if not ms then ms = State.V3Max end
+	ms = math.clamp(ms, 0, 4000)
+	State.V3Max = ms
+	v3MaxBox.Text = tostring(State.V3Max)
+end
+
 local function applyPlayerConfig()
 	local hm = tonumber(headMultBox.Text)
 	if not hm then hm = State.PlayerHeadMult end
@@ -2173,6 +2467,7 @@ local function refresh()
 
 	setToggle(safeFallToggle, State.SafeFallEnabled)
 	setToggle(velToggle, State.VelocityEnabled)
+	setToggle(v3Toggle, State.V3Enabled)
 
 	multBox.Text = tostring(State.NapeMult)
 	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
@@ -2184,11 +2479,16 @@ local function refresh()
 	velAddBox.Text = tostring(State.VelocityAddSpeed)
 	velMaxBox.Text = tostring(State.VelocityMaxSpeed)
 
+	v3MultBox.Text = tostring(State.V3Mult)
+	v3AddBox.Text = tostring(State.V3Add)
+	v3MaxBox.Text = tostring(State.V3Max)
+
 	headMultBox.Text = tostring(State.PlayerHeadMult)
 	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
 
 	refreshBindText()
 	refreshVelBindText()
+	refreshV3BindText()
 
 	if not State.TitanESP then
 		espDetachAllTitans()
@@ -2196,6 +2496,12 @@ local function refresh()
 
 	if not State.RefillESP then
 		detachAllRefillESP()
+	end
+
+	if not State.V3Enabled then
+		v3Toggled = false
+		VeloMultiplierV3.SetHolding(false)
+		v3Status.Text = "Tap key to toggle while enabled"
 	end
 
 	refreshAllPlayerESP()
@@ -2216,6 +2522,7 @@ local function unload()
 	State.VelocityEnabled = false
 	State.TitanEyesEnabled = false
 	State.PlayerNoTouch = false
+	State.V3Enabled = false
 	espDetachAllTitans()
 	detachAllRefillESP()
 	detachAllPlayerESP()
@@ -2401,6 +2708,47 @@ track(velMaxBox.FocusLost:Connect(function()
 	refresh()
 end))
 
+track(v3Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.V3Enabled = not State.V3Enabled
+	if not State.V3Enabled then
+		v3Toggled = false
+		VeloMultiplierV3.SetHolding(false)
+		v3Status.Text = "Tap key to toggle while enabled"
+	end
+	refresh()
+end))
+
+track(v3BindBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	bindingV3 = not bindingV3
+	refresh()
+end))
+
+track(v3ApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyV3Config()
+	refresh()
+end))
+
+track(v3MultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyV3Config()
+	refresh()
+end))
+
+track(v3AddBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyV3Config()
+	refresh()
+end))
+
+track(v3MaxBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyV3Config()
+	refresh()
+end))
+
 track(bindBtn.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	bindingSafeFall = not bindingSafeFall
@@ -2524,6 +2872,15 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 		return
 	end
 
+	if bindingV3 then
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+			State.V3Key = input.KeyCode
+			bindingV3 = false
+			refresh()
+		end
+		return
+	end
+
 	if input.KeyCode == Enum.KeyCode.LeftAlt then
 		gui.Enabled = not gui.Enabled
 		return
@@ -2541,6 +2898,14 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 
 	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
 		VelocityBoost.SetBoostingHold(true)
+	end
+
+	if input.KeyCode == State.V3Key then
+		if State.V3Enabled then
+			v3Toggled = not v3Toggled
+			VeloMultiplierV3.SetHolding(v3Toggled)
+			v3Status.Text = v3Toggled and "V3 Active: ON (tap to turn OFF)" or "V3 Active: OFF (tap to turn ON)"
+		end
 	end
 end))
 
