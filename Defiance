@@ -1133,6 +1133,9 @@ do
 	local lastRawVelocity = nil
 	local lastHookDirH = Vector3.new(0,0,0)
 
+	local baseMagH = 0
+	local baseValid = false
+
 	local function safeUnit(v)
 		local m = v.Magnitude
 		if m <= 1e-6 then return Vector3.zero end
@@ -1194,6 +1197,8 @@ do
 		lastSetVelocity = nil
 		lastRawVelocity = nil
 		lastHookDirH = Vector3.zero
+		baseValid = false
+		baseMagH = 0
 	end
 
 	local function enforceMaxForce(bv)
@@ -1224,11 +1229,16 @@ do
 			return curBVVel
 		end
 
+		if not baseValid then
+			baseMagH = magH
+			baseValid = true
+		end
+
 		local mult = math.clamp(State.VelocityMult, 1, 2)
 		local add = math.clamp(State.VelocityAddSpeed, 0, 125)
 		local maxS = math.clamp(State.VelocityMaxSpeed, 0, 300)
 
-		local newMag = magH * mult + add
+		local newMag = baseMagH * mult + add
 		if newMag > maxS then newMag = maxS end
 		if newMag < 0 then newMag = 0 end
 
@@ -1260,10 +1270,14 @@ do
 		lastSetVelocity = nil
 		lastRawVelocity = nil
 		lastHookDirH = Vector3.zero
+		baseValid = false
+		baseMagH = 0
 	end
 
 	local function setHoldingH(on)
 		holdingH = on
+		baseValid = false
+		baseMagH = 0
 		if not holdingH and targetBV and targetBV.Parent then
 			restoreIfWeWereControlling(targetBV)
 		end
@@ -1271,6 +1285,8 @@ do
 
 	local function setBoostingHold(on)
 		boostingHold = on
+		baseValid = false
+		baseMagH = 0
 		if not boostingHold and targetBV and targetBV.Parent then
 			restoreIfWeWereControlling(targetBV)
 		end
@@ -1285,6 +1301,8 @@ do
 			targetBV, targetHRP = nil, nil
 			lastSetVelocity, lastRawVelocity = nil, nil
 			lastHookDirH = Vector3.zero
+			baseValid = false
+			baseMagH = 0
 			return
 		end
 
@@ -1292,6 +1310,8 @@ do
 			targetBV, targetHRP = nil, nil
 			lastSetVelocity, lastRawVelocity = nil, nil
 			lastHookDirH = Vector3.zero
+			baseValid = false
+			baseMagH = 0
 			return
 		end
 
