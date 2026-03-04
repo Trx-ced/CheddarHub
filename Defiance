@@ -29,6 +29,7 @@ local State = {
 	PlayerHeadMult = 5,
 	PlayerTorsoExpandEnabled = false,
 	PlayerTorsoMult = 3,
+	PlayerNoTouch = false,
 
 	TitanEyesEnabled = false,
 	TitanEyesMult = 5,
@@ -76,6 +77,17 @@ local AntiGrabTargets = {
 	UpperTeeth = true,
 	NeckBone = true
 }
+
+local function isAntiGrabTarget(part)
+	if not (part and part:IsA("BasePart")) then return false end
+	local n = part.Name
+	if AntiGrabTargets[n] then return true end
+	if string.find(n, "Hand", 1, true) then return true end
+	if string.find(n, "LowerArm", 1, true) then return true end
+	if string.find(n, "UpperArm", 1, true) then return true end
+	if n == "LeftArm" or n == "RightArm" then return true end
+	return false
+end
 
 local function storeBasePartState(part)
 	if not part or not part:IsA("BasePart") then return end
@@ -127,6 +139,58 @@ local function restoreBasePartState(part)
 			if mx and my and mz then
 				mesh.Scale = Vector3.new(mx, my, mz)
 			end
+		end
+	end
+end
+
+local function resolveLocalModel()
+	if player.Character and player.Character.Parent then
+		return player.Character
+	end
+	if LiveFolder then
+		local m = LiveFolder:FindFirstChild(player.Name)
+		if m and m:IsA("Model") then
+			return m
+		end
+	end
+	return nil
+end
+
+local function isNoTouchTarget(part)
+	if not (part and part:IsA("BasePart")) then return false end
+	local n = part.Name
+	if n == "Head" then return true end
+	if n == (player.Name .. "Head") then return true end
+	if string.find(n, "Torso", 1, true) then return true end
+	if string.find(n, "Arm", 1, true) then return true end
+	if string.find(n, "Leg", 1, true) then return true end
+	return false
+end
+
+local function restoreCanTouchOnly(part)
+	if not (part and part:IsA("BasePart")) then return end
+	local v = part:GetAttribute("HB_OrigCanTouch")
+	if v == nil then return end
+	part.CanTouch = (v == 1)
+end
+
+local function applyPlayerNoTouch()
+	local model = resolveLocalModel()
+	if not model then return end
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and isNoTouchTarget(d) then
+			storeBasePartState(d)
+			d.CanTouch = false
+		end
+	end
+end
+
+local function restorePlayerNoTouch()
+	local model = resolveLocalModel()
+	if not model then return end
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and isNoTouchTarget(d) then
+			restoreCanTouchOnly(d)
 		end
 	end
 end
@@ -229,7 +293,7 @@ local function applyDisableGrabHitboxesToRig(rig)
 	if not State.DisableGrabHitboxes then return end
 
 	for _, d in ipairs(rig:GetDescendants()) do
-		if d:IsA("MeshPart") and AntiGrabTargets[d.Name] then
+		if d:IsA("BasePart") and isAntiGrabTarget(d) then
 			d.CanCollide = false
 			d.CanTouch = false
 			d.CanQuery = false
@@ -319,7 +383,7 @@ task.spawn(function()
 	while not unloaded do
 		if State.DisableGrabHitboxes then
 			for _, d in ipairs(TitansFolder:GetDescendants()) do
-				if d:IsA("MeshPart") and AntiGrabTargets[d.Name] then
+				if d:IsA("BasePart") and isAntiGrabTarget(d) then
 					d.CanCollide = false
 					d.CanTouch = false
 					d.CanQuery = false
@@ -329,7 +393,7 @@ task.spawn(function()
 			local char = player.Character
 			if char then
 				for _, d in ipairs(char:GetDescendants()) do
-					if d:IsA("MeshPart") then
+					if d:IsA("BasePart") then
 						d.CanCollide = false
 						d.CanTouch = false
 						d.CanQuery = false
@@ -337,6 +401,11 @@ task.spawn(function()
 				end
 			end
 		end
+
+		if State.PlayerNoTouch then
+			applyPlayerNoTouch()
+		end
+
 		task.wait(0.2)
 	end
 end)
@@ -1032,6 +1101,12 @@ end
 track(player.CharacterAdded:Connect(function(char)
 	if unloaded then return end
 	SafeFall.Setup(char)
+	task.delay(0.1, function()
+		if unloaded then return end
+		if State.PlayerNoTouch then
+			applyPlayerNoTouch()
+		end
+	end)
 	task.delay(0.5, function()
 		if unloaded then return end
 		applyPlayerExpandAll()
@@ -1716,10 +1791,11 @@ local boxP = sectionBox(pagePlayers, 16, 16, 460, 340, "Players")
 local plrEspToggle = toggleRow(boxP, 44, "Player ESP")
 local headExpandToggle = toggleRow(boxP, 78, "Expand Head")
 local torsoExpandToggle = toggleRow(boxP, 112, "Expand Torso")
+local noTouchToggle = toggleRow(boxP, 146, "Player NoTouch")
 
 mk("TextLabel", {
 	Parent = boxP,
-	Position = UDim2.new(0, 12, 0, 150),
+	Position = UDim2.new(0, 12, 0, 184),
 	Size = UDim2.new(0, 180, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -1731,7 +1807,7 @@ mk("TextLabel", {
 
 local headMultBox = mk("TextBox", {
 	Parent = boxP,
-	Position = UDim2.new(0, 12, 0, 168),
+	Position = UDim2.new(0, 12, 0, 202),
 	Size = UDim2.new(0, 140, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1746,7 +1822,7 @@ mk("UIStroke", { Parent = headMultBox, Color = COL_STROKE, Thickness = 1, Transp
 
 mk("TextLabel", {
 	Parent = boxP,
-	Position = UDim2.new(0, 180, 0, 150),
+	Position = UDim2.new(0, 180, 0, 184),
 	Size = UDim2.new(0, 180, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -1758,7 +1834,7 @@ mk("TextLabel", {
 
 local torsoMultBox = mk("TextBox", {
 	Parent = boxP,
-	Position = UDim2.new(0, 180, 0, 168),
+	Position = UDim2.new(0, 180, 0, 202),
 	Size = UDim2.new(0, 140, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1773,7 +1849,7 @@ mk("UIStroke", { Parent = torsoMultBox, Color = COL_STROKE, Thickness = 1, Trans
 
 local plrApplyBtn = mk("TextButton", {
 	Parent = boxP,
-	Position = UDim2.new(0, 336, 0, 168),
+	Position = UDim2.new(0, 336, 0, 202),
 	Size = UDim2.new(0, 106, 0, 22),
 	BackgroundColor3 = COL_PURP,
 	TextColor3 = COL_TEXT,
@@ -2093,6 +2169,7 @@ local function refresh()
 	setToggle(plrEspToggle, State.PlayerESP)
 	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
 	setToggle(torsoExpandToggle, State.PlayerTorsoExpandEnabled)
+	setToggle(noTouchToggle, State.PlayerNoTouch)
 
 	setToggle(safeFallToggle, State.SafeFallEnabled)
 	setToggle(velToggle, State.VelocityEnabled)
@@ -2127,12 +2204,18 @@ end
 local function unload()
 	if unloaded then return end
 	unloaded = true
+	if State.PlayerNoTouch then
+		pcall(function()
+			restorePlayerNoTouch()
+		end)
+	end
 	State.TitanESP = false
 	State.RefillESP = false
 	State.PlayerESP = false
 	State.SafeFallEnabled = false
 	State.VelocityEnabled = false
 	State.TitanEyesEnabled = false
+	State.PlayerNoTouch = false
 	espDetachAllTitans()
 	detachAllRefillESP()
 	detachAllPlayerESP()
@@ -2238,6 +2321,17 @@ track(torsoExpandToggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.PlayerTorsoExpandEnabled = not State.PlayerTorsoExpandEnabled
 	applyPlayerExpandAll()
+	refresh()
+end))
+
+track(noTouchToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.PlayerNoTouch = not State.PlayerNoTouch
+	if State.PlayerNoTouch then
+		applyPlayerNoTouch()
+	else
+		restorePlayerNoTouch()
+	end
 	refresh()
 end))
 
@@ -2467,3 +2561,6 @@ setTabActive("Main")
 refresh()
 applyPlayerExpandAll()
 refreshAllPlayerESP()
+if State.PlayerNoTouch then
+	applyPlayerNoTouch()
+end
