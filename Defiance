@@ -1285,9 +1285,8 @@ do
 	end))
 end
 
-local VeloMultiplierV3 = {}
+lolocal VeloMultiplierV3 = {}
 do
-	local holding = false
 	local lastPrint = 0
 	local targetBV = nil
 	local targetHRP = nil
@@ -1329,6 +1328,7 @@ do
 				return char, hrp
 			end
 		end
+
 		local live = Workspace:FindFirstChild("Live")
 		if live then
 			local m = live:FindFirstChild(player.Name)
@@ -1339,6 +1339,7 @@ do
 					return m, hrp
 				end
 			end
+
 			local m2 = live:FindFirstChild("heartuchihaleader")
 			if m2 and m2:IsA("Model") then
 				local hrp = m2:FindFirstChild("HumanoidRootPart")
@@ -1348,6 +1349,7 @@ do
 				end
 			end
 		end
+
 		return nil
 	end
 
@@ -1371,25 +1373,42 @@ do
 		return nil
 	end
 
+	local function clearTargets()
+		targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
+	end
+
 	local function applyOnce()
+		-- must be enabled in UI
 		if not State.V3Enabled then
-			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
+			clearTargets()
 			return
 		end
 
-		if not holding then
-			targetBV, targetHRP, targetModel, lastId = nil, nil, nil, nil
+		-- never run while typing/chatting
+		if UserInputService:GetFocusedTextBox() then
+			clearTargets()
 			return
 		end
 
+		-- ONLY run while hooked (E or Q held)
+		local hookHeld = UserInputService:IsKeyDown(Enum.KeyCode.E) or UserInputService:IsKeyDown(Enum.KeyCode.Q)
+		if not hookHeld then
+			clearTargets()
+			return
+		end
+
+		-- clamp config (uses your APPLY boxes)
 		State.V3Mult = clamp(State.V3Mult, 0, 5)
 		State.V3Add = clamp(State.V3Add, -400, 400)
 		State.V3Max = clamp(State.V3Max, 0, 4000)
 
 		local model, hrp = resolveTarget()
-		if not model or not hrp then return end
+		if not model or not hrp then
+			clearTargets()
+			return
+		end
 
-		if not targetModel or targetModel ~= model or not targetHRP or targetHRP ~= hrp then
+		if targetModel ~= model or targetHRP ~= hrp then
 			targetModel = model
 			targetHRP = hrp
 			targetBV = nil
@@ -1400,8 +1419,11 @@ do
 			targetBV = findBodyVelocity(targetHRP, targetModel)
 			lastId = nil
 		end
-		if not targetBV or not targetBV.Parent then return end
+		if not targetBV or not targetBV.Parent then
+			return
+		end
 
+		-- enforce force/p
 		if targetBV.MaxForce ~= State.V3Force then
 			targetBV.MaxForce = State.V3Force
 		end
@@ -1429,6 +1451,8 @@ do
 
 		local target = clamp(spd * State.V3Mult + State.V3Add, 0, State.V3Max)
 		local outH = dir * target
+
+		-- IMPORTANT: preserve Y so we don't break vertical movement
 		targetBV.Velocity = Vector3.new(outH.X, v0.Y, outH.Z)
 
 		local now = os.clock()
@@ -1445,11 +1469,11 @@ do
 		applyOnce()
 	end))
 
-	function VeloMultiplierV3.SetHolding(on)
-		holding = on
+	-- kept for compatibility if anything else calls it, but it no longer matters
+	function VeloMultiplierV3.SetHolding(_on)
+		-- no-op (V3 is controlled by E/Q hold now)
 	end
 end
-
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -1962,7 +1986,7 @@ local v3Status = mk("TextLabel", {
 	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(145,145,145),
-	Text = "Tap key to toggle while enabled",
+Text = "Hold E or Q while enabled (won't run while chatting)",
 })
 
 local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
@@ -2332,7 +2356,7 @@ local function refreshVelBindText()
 end
 
 local function refreshV3BindText()
-	v3BindBtn.Text = "Keybind: " .. keyName(State.V3Key) .. (bindingV3 and " (Press a key...)" or " (Click to set)")
+	v3BindBtn.Text = "Hook Keys: E / Q (Hold)"
 end
 
 local function applyMultiplier()
@@ -2498,10 +2522,8 @@ local function refresh()
 		detachAllRefillESP()
 	end
 
-	if not State.V3Enabled then
-		v3Toggled = false
-		VeloMultiplierV3.SetHolding(false)
-		v3Status.Text = "Tap key to toggle while enabled"
+		if not State.V3Enabled then
+		v3Status.Text = "Hold E or Q while enabled (won't run while chatting)"
 	end
 
 	refreshAllPlayerESP()
@@ -2899,7 +2921,6 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
 		VelocityBoost.SetBoostingHold(true)
 	end
-
 	if input.KeyCode == State.V3Key then
 		if State.V3Enabled then
 			v3Toggled = not v3Toggled
@@ -2907,7 +2928,6 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 			v3Status.Text = v3Toggled and "V3 Active: ON (tap to turn OFF)" or "V3 Active: OFF (tap to turn ON)"
 		end
 	end
-end))
 
 track(UserInputService.InputEnded:Connect(function(input, gp)
 	if unloaded then return end
