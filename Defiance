@@ -378,13 +378,23 @@ task.spawn(function()
 					local hrp = plr:FindFirstChild("HumanoidRootPart")
 					if hrp then
 						hrp.CanTouch = false
+					end
+				end
+			end
+
+		
+
+			local char = player.Character
+			if char then
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("BasePart") then
 						d.CanCollide = false
 						d.CanTouch = false
 						d.CanQuery = false
 					end
 				end
 			end
-
+		end
 
 		if State.PlayerNoTouch then
 			applyPlayerNoTouch()
