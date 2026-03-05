@@ -371,6 +371,19 @@ task.spawn(function()
 				end
 			end
 
+			local live = workspace:FindFirstChild("Live")
+			if live then
+				local plr = live:FindFirstChild(player.Name)
+				if plr then
+					local hrp = plr:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						hrp.CanTouch = false
+					end
+				end
+			end
+
+		
+
 			local char = player.Character
 			if char then
 				for _, d in ipairs(char:GetDescendants()) do
