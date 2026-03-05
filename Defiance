@@ -118,7 +118,7 @@ local function storeBasePartState(part)
 	local mesh = part:FindFirstChildWhichIsA("SpecialMesh")
 	if mesh then
 		part:SetAttribute("HB_HasMesh", 1)
-		part:SetAttribute("HB_OrigMeshX", mesh.Scale.X)s
+		part:SetAttribute("HB_OrigMeshX", mesh.Scale.X)
 		part:SetAttribute("HB_OrigMeshY", mesh.Scale.Y)
 		part:SetAttribute("HB_OrigMeshZ", mesh.Scale.Z)
 	else
@@ -378,22 +378,24 @@ task.spawn(function()
 					local hrp = plr:FindFirstChild("HumanoidRootPart")
 					if hrp then
 						hrp.CanTouch = false
-						hrp.CanCollide = false
-						hrp.CanQuery = false
 					end
 				end
 			end
 
 		
-local char = player.Character
-if char then
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		hrp.CanCollide = false
-		hrp.CanTouch = false
-		hrp.CanQuery = false
-	end
-end
+
+			local char = player.Character
+			if char then
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.CanCollide = false
+						d.CanTouch = false
+						d.CanQuery = false
+					end
+				end
+			end
+		end
+
 		if State.PlayerNoTouch then
 			applyPlayerNoTouch()
 		end
