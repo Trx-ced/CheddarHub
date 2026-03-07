@@ -1,5 +1,3 @@
--- CheddarCheeseHub | Defiance (V4 integrated, V3 removed, prints removed)
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -18,6 +16,10 @@ local LiveFolder = workspace:FindFirstChild("Live")
 local State = {
 	NapeEnabled = false,
 	NapeMult = 5,
+	NapeUseXYZ = false,
+	NapeScaleX = 1,
+	NapeScaleY = 1,
+	NapeScaleZ = 1,
 	DisableGrabHitboxes = false,
 
 	TitanESP = false,
@@ -41,22 +43,18 @@ local State = {
 	NearGroundDist = 15,
 	SafeFallKey = Enum.KeyCode.L,
 
-	VelocityEnabled = false,
-	VelocityUseKeybind = false,
-	VelocityKey = Enum.KeyCode.LeftShift,
-	VelocityMult = 1.05,
-	VelocityAddSpeed = 0,
-	VelocityMaxSpeed = 250,
-
-	-- V4 (replaces old V3)
-	V4Enabled = false,
-	V4Mult = 1.15,
-	V4Add = 45,
-	V4Max = 400,
-	V4Force = Vector3.new(1e9, 1e9, 1e9),
-	V4P = 50000,
-	V4NearGroundDist = 6,
-	V4MaxDownY = -60,
+	V6Enabled = false,
+	V6Mult = 7,
+	V6Add = 0,
+	V6Max = 400,
+	V6Force = Vector3.new(1e9, 1e9, 1e9),
+	V6P = 50000,
+	V6NearGroundDist = 8,
+	V6MaxDownY = -35,
+	V6FloorSnapHeight = 2.6,
+	V6FloorSinkTolerance = 0.9,
+	V6WallCheckDist = 3.5,
+	V6WallSlideLoss = 0.95,
 }
 
 local Connections = {}
@@ -259,7 +257,15 @@ local function applyNapeToRig(rig)
 				local oy = nape:GetAttribute("HB_OrigSizeY")
 				local oz = nape:GetAttribute("HB_OrigSizeZ")
 				if ox and oy and oz then
-					nape.Size = Vector3.new(ox, oy, oz) * math.clamp(State.NapeMult, 1, 30000)
+					if State.NapeUseXYZ then
+						nape.Size = Vector3.new(
+							ox * math.clamp(State.NapeScaleX, 0.05, 30000),
+							oy * math.clamp(State.NapeScaleY, 0.05, 30000),
+							oz * math.clamp(State.NapeScaleZ, 0.05, 30000)
+						)
+					else
+						nape.Size = Vector3.new(ox, oy, oz) * math.clamp(State.NapeMult, 1, 30000)
+					end
 				end
 				fixNapePhysics(nape)
 			else
@@ -376,21 +382,20 @@ task.spawn(function()
 				local plr = live:FindFirstChild(player.Name)
 				if plr then
 					local hrp = plr:FindFirstChild("HumanoidRootPart")
-					if hrp and hrp:IsA("BasePart") then
-						hrp.CanCollide = false
+					if hrp then
 						hrp.CanTouch = false
-						hrp.CanQuery = false
 					end
 				end
 			end
 
 			local char = player.Character
 			if char then
-				local hrp = char:FindFirstChild("HumanoidRootPart")
-				if hrp and hrp:IsA("BasePart") then
-					hrp.CanCollide = false
-					hrp.CanTouch = false
-					hrp.CanQuery = false
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.CanCollide = false
+						d.CanTouch = false
+						d.CanQuery = false
+					end
 				end
 			end
 		end
@@ -1110,200 +1115,7 @@ if player.Character then
 	SafeFall.Setup(player.Character)
 end
 
--- Existing VelocityBoost (kept)
-local VelocityBoost = {}
-do
-	local FORCE = Vector3.new(1e9, 1e9, 1e9)
-	local DIR_EPS = 0.35
-	local SAME_EPS = 0.25
-
-	local holdingH = false
-	local boostingHold = false
-
-	local targetBV = nil
-	local targetHRP = nil
-
-	local lastSetVelocity = nil
-	local lastRawVelocity = nil
-	local lastHookDirH = Vector3.new(0,0,0)
-
-	local function safeUnit(v)
-		local m = v.Magnitude
-		if m <= 1e-6 then return Vector3.zero end
-		return v / m
-	end
-
-	local function resolveCharacterModel()
-		if player.Character and player.Character.Parent then
-			return player.Character
-		end
-
-		local mainFolders = Workspace:FindFirstChild("MainFolders")
-		if not mainFolders then return nil end
-		local charsFolder = mainFolders:FindFirstChild("Characters")
-		if not charsFolder then return nil end
-
-		local byName = charsFolder:FindFirstChild(player.Name)
-		if byName and byName:IsA("Model") then
-			return byName
-		end
-
-		for _, m in ipairs(charsFolder:GetChildren()) do
-			if m:IsA("Model") and m:FindFirstChild("HumanoidRootPart") and m:FindFirstChildOfClass("Humanoid") then
-				return m
-			end
-		end
-
-		return nil
-	end
-
-	local function findTargets(model)
-		local hrp = model:FindFirstChild("HumanoidRootPart")
-		if not hrp then return nil end
-
-		local bv = hrp:FindFirstChild("MainBodyVelocity")
-		if bv and bv:IsA("BodyVelocity") then
-			return bv, hrp
-		end
-
-		for _, ch in ipairs(hrp:GetChildren()) do
-			if ch:IsA("BodyVelocity") then
-				return ch, hrp
-			end
-		end
-
-		return nil
-	end
-
-	local function reacquire()
-		local model = resolveCharacterModel()
-		if not model then
-			targetBV, targetHRP = nil, nil
-			return
-		end
-
-		local bv, hrp = findTargets(model)
-		targetBV, targetHRP = bv, hrp
-
-		lastSetVelocity = nil
-		lastRawVelocity = nil
-		lastHookDirH = Vector3.zero
-	end
-
-	local function enforceMaxForce(bv)
-		if bv.MaxForce ~= FORCE then
-			bv.MaxForce = FORCE
-		end
-	end
-
-	local function computeBoostedFollowHook(curBVVel, realVel)
-		local curH = Vector3.new(curBVVel.X, 0, curBVVel.Z)
-		local realH = Vector3.new(realVel.X, 0, realVel.Z)
-
-		local dirH = Vector3.zero
-		local magH = 0
-
-		if curH.Magnitude > DIR_EPS then
-			dirH = safeUnit(curH)
-			magH = curH.Magnitude
-			lastHookDirH = dirH
-		elseif realH.Magnitude > DIR_EPS then
-			dirH = safeUnit(realH)
-			magH = realH.Magnitude
-			lastHookDirH = dirH
-		elseif lastHookDirH.Magnitude > 0 then
-			dirH = lastHookDirH
-			magH = curH.Magnitude
-		else
-			return curBVVel
-		end
-
-		local mult = math.clamp(State.VelocityMult, 1, 2)
-		local add = math.clamp(State.VelocityAddSpeed, 0, 125)
-		local maxS = math.clamp(State.VelocityMaxSpeed, 0, 300)
-
-		local newMag = magH * mult + add
-		if newMag > maxS then newMag = maxS end
-		if newMag < 0 then newMag = 0 end
-
-		local boostedH = dirH * newMag
-		local out = Vector3.new(boostedH.X, curBVVel.Y, boostedH.Z)
-		local m = out.Magnitude
-		if m > maxS and m > 1e-6 then
-			out = (out / m) * maxS
-		end
-		return out
-	end
-
-	local function applyBoost(bv, hrp)
-		enforceMaxForce(bv)
-		local curBVVel = bv.Velocity
-		local realVel = hrp.AssemblyLinearVelocity
-		local boosted = computeBoostedFollowHook(curBVVel, realVel)
-		bv.Velocity = boosted
-		lastRawVelocity = curBVVel
-		lastSetVelocity = boosted
-	end
-
-	local function restoreIfWeWereControlling(bv)
-		if lastSetVelocity and (bv.Velocity - lastSetVelocity).Magnitude <= SAME_EPS then
-			if lastRawVelocity then
-				bv.Velocity = lastRawVelocity
-			end
-		end
-		lastSetVelocity = nil
-		lastRawVelocity = nil
-		lastHookDirH = Vector3.zero
-	end
-
-	local function setHoldingH(on)
-		holdingH = on
-		if not holdingH and targetBV and targetBV.Parent then
-			restoreIfWeWereControlling(targetBV)
-		end
-	end
-
-	local function setBoostingHold(on)
-		boostingHold = on
-		if not boostingHold and targetBV and targetBV.Parent then
-			restoreIfWeWereControlling(targetBV)
-		end
-	end
-
-	VelocityBoost.SetHoldingH = setHoldingH
-	VelocityBoost.SetBoostingHold = setBoostingHold
-
-	local stepEvent = RunService.PreSimulation or RunService.Heartbeat
-	track(stepEvent:Connect(function()
-		if not State.VelocityEnabled then
-			targetBV, targetHRP = nil, nil
-			lastSetVelocity, lastRawVelocity = nil, nil
-			lastHookDirH = Vector3.zero
-			return
-		end
-
-		if not holdingH then
-			targetBV, targetHRP = nil, nil
-			lastSetVelocity, lastRawVelocity = nil, nil
-			lastHookDirH = Vector3.zero
-			return
-		end
-
-		if State.VelocityUseKeybind and not boostingHold then
-			return
-		end
-
-		if not targetBV or not targetBV.Parent or not targetHRP or not targetHRP.Parent then
-			reacquire()
-		end
-		if not targetBV or not targetHRP then return end
-
-		applyBoost(targetBV, targetHRP)
-	end))
-end
-
--- V4 multiplier module (no prints)
-local VeloMultiplierV4 = {}
+local VeloMultiplierV6 = {}
 do
 	local UIS = UserInputService
 
@@ -1335,7 +1147,7 @@ do
 			local hrp = char:FindFirstChild("HumanoidRootPart")
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			if hrp and hum then
-				return char, hum, hrp
+				return char, hum, hrp, "player.Character"
 			end
 		end
 
@@ -1346,7 +1158,16 @@ do
 				local hum = m:FindFirstChildOfClass("Humanoid")
 				local hrp = m:FindFirstChild("HumanoidRootPart")
 				if hum and hrp then
-					return m, hum, hrp
+					return m, hum, hrp, "workspace.Live." .. player.Name
+				end
+			end
+
+			local m2 = live:FindFirstChild("heartuchihaleader")
+			if m2 and m2:IsA("Model") then
+				local hum = m2:FindFirstChildOfClass("Humanoid")
+				local hrp = m2:FindFirstChild("HumanoidRootPart")
+				if hum and hrp then
+					return m2, hum, hrp, "workspace.Live.heartuchihaleader"
 				end
 			end
 		end
@@ -1374,12 +1195,20 @@ do
 		return nil
 	end
 
-	local function raycastDown(character, origin)
+	local function rayParamsExclude(character)
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { character }
 		params.IgnoreWater = true
-		return Workspace:Raycast(origin, Vector3.new(0, -250, 0), params)
+		return params
+	end
+
+	local function raycastDown(character, origin, dist)
+		return Workspace:Raycast(origin, Vector3.new(0, -(dist or 350), 0), rayParamsExclude(character))
+	end
+
+	local function raycastForward(character, origin, dir, dist)
+		return Workspace:Raycast(origin, dir * (dist or 6), rayParamsExclude(character))
 	end
 
 	local function restoreBV()
@@ -1387,15 +1216,63 @@ do
 			if origMaxForce then pcall(function() lastBV.MaxForce = origMaxForce end) end
 			if origP ~= nil then pcall(function() lastBV.P = origP end) end
 		end
-		lastBV = nil
-		lastBVDebug = nil
-		origMaxForce = nil
-		origP = nil
+		lastBV, lastBVDebug = nil, nil
+		origMaxForce, origP = nil, nil
 		touchedBV = false
 	end
 
+	local function floorSnap(model, root)
+		local hit = raycastDown(model, root.Position, 500)
+		if not hit then return nil end
+
+		local groundY = hit.Position.Y
+		local dist = root.Position.Y - groundY
+
+		if dist <= (State.V6FloorSnapHeight + State.V6FloorSinkTolerance) then
+			local minY = groundY + State.V6FloorSnapHeight
+			if root.Position.Y < minY then
+				local pos = root.Position
+				local cf = root.CFrame
+				local rot = cf - cf.Position
+				root.CFrame = CFrame.new(pos.X, minY, pos.Z) * rot
+			end
+		end
+
+		return hit, dist
+	end
+
+	local function wallSlide(model, root, desiredPlanarVel)
+		local h = desiredPlanarVel.Magnitude
+		if h <= 1e-3 then return desiredPlanarVel end
+
+		local dir = desiredPlanarVel / h
+		local origin = root.Position
+		local hit = raycastForward(model, origin, dir, State.V6WallCheckDist)
+
+		if not hit or not hit.Instance then
+			return desiredPlanarVel
+		end
+
+		if hit.Instance.CanCollide == false then
+			return desiredPlanarVel
+		end
+
+		local n = hit.Normal
+		local into = desiredPlanarVel:Dot(n)
+		if into < 0 then
+			local slid = desiredPlanarVel - (n * into)
+			return slid * State.V6WallSlideLoss
+		end
+
+		return desiredPlanarVel
+	end
+
 	local function applyOnce()
-		if not State.V4Enabled then
+		State.V6Mult = clamp(State.V6Mult, 0, 5)
+		State.V6Add  = clamp(State.V6Add, -400, 400)
+		State.V6Max  = clamp(State.V6Max, 0, 4000)
+
+		if not State.V6Enabled then
 			restoreBV()
 			return
 		end
@@ -1405,16 +1282,11 @@ do
 			return
 		end
 
-		-- MUST be hooked: hold E or Q
 		local hookHeld = UIS:IsKeyDown(Enum.KeyCode.E) or UIS:IsKeyDown(Enum.KeyCode.Q)
 		if not hookHeld then
 			restoreBV()
 			return
 		end
-
-		State.V4Mult = clamp(State.V4Mult, 0, 5)
-		State.V4Add  = clamp(State.V4Add, -400, 400)
-		State.V4Max  = clamp(State.V4Max, 0, 400)
 
 		local model, humanoid, root = resolveTarget()
 		if not model then
@@ -1438,14 +1310,16 @@ do
 			touchedBV = false
 		end
 
-		if bv.MaxForce ~= State.V4Force then
-			bv.MaxForce = State.V4Force
+		if bv.MaxForce ~= State.V6Force then
+			bv.MaxForce = State.V6Force
 			touchedBV = true
 		end
-		if bv.P ~= State.V4P then
-			bv.P = State.V4P
+		if bv.P ~= State.V6P then
+			bv.P = State.V6P
 			touchedBV = true
 		end
+
+		local hitDown, distToFloor = floorSnap(model, root)
 
 		local v0 = bv.Velocity
 		local h0 = planar(v0)
@@ -1459,26 +1333,27 @@ do
 			return
 		end
 
-		local target = clamp(spd * State.V4Mult + State.V4Add, 0, State.V4Max)
-		local outH = dir * target
+		local targetSpeed = clamp(spd * State.V6Mult + State.V6Add, 0, State.V6Max)
+		local desiredH = dir * targetSpeed
+
+		desiredH = wallSlide(model, root, desiredH)
 
 		local y = v0.Y
 		local realY = root.AssemblyLinearVelocity.Y
-		if realY > y then
-			y = realY
-		end
+		if realY > y then y = realY end
 
-		local hit = raycastDown(model, root.Position)
-		if hit then
-			local dist = root.Position.Y - hit.Position.Y
-			if dist <= State.V4NearGroundDist then
-				if y < State.V4MaxDownY then
-					y = State.V4MaxDownY
+		if hitDown and distToFloor then
+			if distToFloor <= State.V6NearGroundDist then
+				if y < State.V6MaxDownY then
+					y = State.V6MaxDownY
+				end
+				if distToFloor <= (State.V6FloorSnapHeight + 0.25) and y < -5 then
+					y = -5
 				end
 			end
 		end
 
-		bv.Velocity = Vector3.new(outH.X, y, outH.Z)
+		bv.Velocity = Vector3.new(desiredH.X, y, desiredH.Z)
 	end
 
 	local stepEvent = RunService.PreSimulation or RunService.Heartbeat
@@ -1486,12 +1361,11 @@ do
 		applyOnce()
 	end))
 
-	function VeloMultiplierV4.Stop()
+	function VeloMultiplierV6.Stop()
 		restoreBV()
 	end
 end
 
--- UI BUILD
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -1519,7 +1393,7 @@ local gui = mk("ScreenGui", {
 local main = mk("Frame", {
 	Parent = gui,
 	Position = UDim2.new(0.15, 0, 0.2, 0),
-	Size = UDim2.new(0, 720, 0, 400),
+	Size = UDim2.new(0, 720, 0, 430),
 	BackgroundColor3 = COL_BG,
 	BorderSizePixel = 0,
 })
@@ -1626,7 +1500,7 @@ local pageTitanEyes = newPage("Titan Eyes")
 local pagePlayers = newPage("Players")
 local pageMisc = newPage("Misc")
 local pageUI = newPage("UI Settings")
-local pageV4 = newPage("Velocity V4")
+local pageV6 = newPage("Velocity V6")
 
 local function sectionBox(parent, x, y, w, h, headerText)
 	local box = mk("Frame", {
@@ -1697,26 +1571,26 @@ local function keyName(kc)
 	return p or s
 end
 
--- MAIN PAGE
-local boxA = sectionBox(pageMain, 16, 16, 460, 340, "Titan Settings")
+local boxA = sectionBox(pageMain, 16, 16, 460, 370, "Titan Settings")
 local napeToggle = toggleRow(boxA, 44, "Nape Hitbox (Nape + ServerHB)")
 local grabHBtoggle = toggleRow(boxA, 78, "Disable Grab Hitboxes (V2)")
+local napeXYZToggle = toggleRow(boxA, 112, "Use XYZ Nape Scale")
 
 mk("TextLabel", {
 	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 120),
+	Position = UDim2.new(0, 12, 0, 148),
 	Size = UDim2.new(1, -24, 0, 18),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = COL_SUB,
-	Text = "Nape Multiplier (1-30)",
+	Text = "Quick Multiplier (1-30)",
 })
 
 local multBox = mk("TextBox", {
 	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 142),
+	Position = UDim2.new(0, 12, 0, 170),
 	Size = UDim2.new(0, 300, 0, 26),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
@@ -1731,7 +1605,7 @@ mk("UIStroke", { Parent = multBox, Color = COL_STROKE, Thickness = 1, Transparen
 
 local applyBtn = mk("TextButton", {
 	Parent = boxA,
-	Position = UDim2.new(0, 322, 0, 142),
+	Position = UDim2.new(0, 322, 0, 170),
 	Size = UDim2.new(0, 120, 0, 26),
 	BackgroundColor3 = COL_PURP,
 	TextColor3 = COL_TEXT,
@@ -1743,154 +1617,118 @@ local applyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = applyBtn, CornerRadius = UDim.new(0, 8) })
 
-local velToggleY = 182
-local velToggle = toggleRow(boxA, velToggleY, "Velocity Speed")
-
-local velPlus = mk("TextButton", {
+mk("TextLabel", {
 	Parent = boxA,
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -70, 0, velToggleY-2),
-	Size = UDim2.new(0, 44, 0, 22),
-	BackgroundColor3 = Color3.fromRGB(26,26,26),
-	TextColor3 = COL_TEXT,
-	BorderSizePixel = 0,
-	Font = Enum.Font.GothamBold,
-	TextSize = 14,
-	Text = "+",
-	AutoButtonColor = false,
+	Position = UDim2.new(0, 12, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale X",
 })
-mk("UICorner", { Parent = velPlus, CornerRadius = UDim.new(0, 10) })
-mk("UIStroke", { Parent = velPlus, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
-local velBindBtn = mk("TextButton", {
+local napeXBox = mk("TextBox", {
 	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 206),
-	Size = UDim2.new(0, 260, 0, 22),
+	Position = UDim2.new(0, 12, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
 	TextColor3 = COL_TEXT,
 	BorderSizePixel = 0,
-	Font = Enum.Font.GothamBold,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
 	TextSize = 12,
-	Text = "Keybind: LeftShift (Off)",
+	Text = tostring(State.NapeScaleX),
+})
+mk("UICorner", { Parent = napeXBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeXBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 118, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale Y",
+})
+
+local napeYBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 118, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeScaleY),
+})
+mk("UICorner", { Parent = napeYBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeYBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 224, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale Z",
+})
+
+local napeZBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 224, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeScaleZ),
+})
+mk("UICorner", { Parent = napeZBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeZBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local napeXYZApplyBtn = mk("TextButton", {
+	Parent = boxA,
+	Position = UDim2.new(0, 332, 0, 230),
+	Size = UDim2.new(0, 110, 0, 22),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	Text = "APPLY XYZ",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = velBindBtn, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = velBindBtn, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+mk("UICorner", { Parent = napeXYZApplyBtn, CornerRadius = UDim.new(0, 8) })
 
-local velWarn = mk("TextLabel", {
+mk("TextLabel", {
 	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 232),
+	Position = UDim2.new(0, 12, 0, 266),
 	Size = UDim2.new(1, -24, 0, 18),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(145,145,145),
-	Text = "ONLY USE WHEN HOOKED, IF YOU USE WHEN WALKING HOOK THEN RELEASE TO FIX",
+	Text = "Quick Multiplier works when XYZ Scale is OFF. XYZ Scale works when XYZ Scale is ON.",
 })
+
+local boxV6 = sectionBox(pageV6, 16, 16, 460, 340, "Velocity V6")
+local v6Toggle = toggleRow(boxV6, 44, "Enable Velocity V6 (Hold Q or E)")
 
 mk("TextLabel", {
-	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 254),
-	Size = UDim2.new(0, 150, 0, 16),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextColor3 = COL_SUB,
-	Text = "Multiplier (1-2x)",
-})
-
-local velMultBox = mk("TextBox", {
-	Parent = boxA,
-	Position = UDim2.new(0, 12, 0, 272),
-	Size = UDim2.new(0, 110, 0, 22),
-	BackgroundColor3 = Color3.fromRGB(26,26,26),
-	TextColor3 = COL_TEXT,
-	BorderSizePixel = 0,
-	ClearTextOnFocus = false,
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 12,
-	Text = tostring(State.VelocityMult),
-})
-mk("UICorner", { Parent = velMultBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = velMultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
-
-mk("TextLabel", {
-	Parent = boxA,
-	Position = UDim2.new(0, 132, 0, 254),
-	Size = UDim2.new(0, 150, 0, 16),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextColor3 = COL_SUB,
-	Text = "AddSpeed (0-125)",
-})
-
-local velAddBox = mk("TextBox", {
-	Parent = boxA,
-	Position = UDim2.new(0, 132, 0, 272),
-	Size = UDim2.new(0, 110, 0, 22),
-	BackgroundColor3 = Color3.fromRGB(26,26,26),
-	TextColor3 = COL_TEXT,
-	BorderSizePixel = 0,
-	ClearTextOnFocus = false,
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 12,
-	Text = tostring(State.VelocityAddSpeed),
-})
-mk("UICorner", { Parent = velAddBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = velAddBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
-
-mk("TextLabel", {
-	Parent = boxA,
-	Position = UDim2.new(0, 252, 0, 254),
-	Size = UDim2.new(0, 160, 0, 16),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextColor3 = COL_SUB,
-	Text = "MaxSpeed (0-300)",
-})
-
-local velMaxBox = mk("TextBox", {
-	Parent = boxA,
-	Position = UDim2.new(0, 252, 0, 272),
-	Size = UDim2.new(0, 110, 0, 22),
-	BackgroundColor3 = Color3.fromRGB(26,26,26),
-	TextColor3 = COL_TEXT,
-	BorderSizePixel = 0,
-	ClearTextOnFocus = false,
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 12,
-	Text = tostring(State.VelocityMaxSpeed),
-})
-mk("UICorner", { Parent = velMaxBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = velMaxBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
-
-local velApplyBtn = mk("TextButton", {
-	Parent = boxA,
-	Position = UDim2.new(0, 406, 0, 272),
-	Size = UDim2.new(0, 36, 0, 22),
-	BackgroundColor3 = COL_PURP,
-	TextColor3 = COL_TEXT,
-	BorderSizePixel = 0,
-	Font = Enum.Font.GothamBold,
-	TextSize = 11,
-	Text = "OK",
-	AutoButtonColor = false,
-})
-mk("UICorner", { Parent = velApplyBtn, CornerRadius = UDim.new(0, 8) })
-
--- V4 PAGE
-local boxV4 = sectionBox(pageV4, 16, 16, 460, 340, "Velocity V4 (BodyVelocity)")
-
-local v4Toggle = toggleRow(boxV4, 44, "Enable Velocity V4 (Hold E or Q)")
-
-mk("TextLabel", {
-	Parent = boxV4,
+	Parent = boxV6,
 	Position = UDim2.new(0, 12, 0, 86),
 	Size = UDim2.new(1, -24, 0, 18),
 	BackgroundTransparency = 1,
@@ -1898,11 +1736,11 @@ mk("TextLabel", {
 	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = Color3.fromRGB(145,145,145),
-	Text = "Only applies while hooked (holding E or Q) and not typing.",
+	Text = "Velocity boost only works while holding Q or E.",
 })
 
 mk("TextLabel", {
-	Parent = boxV4,
+	Parent = boxV6,
 	Position = UDim2.new(0, 12, 0, 116),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
@@ -1913,8 +1751,8 @@ mk("TextLabel", {
 	Text = "Multiplier (0-5)",
 })
 
-local v4MultBox = mk("TextBox", {
-	Parent = boxV4,
+local v6MultBox = mk("TextBox", {
+	Parent = boxV6,
 	Position = UDim2.new(0, 12, 0, 134),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
@@ -1923,13 +1761,13 @@ local v4MultBox = mk("TextBox", {
 	ClearTextOnFocus = false,
 	Font = Enum.Font.GothamSemibold,
 	TextSize = 12,
-	Text = tostring(State.V4Mult),
+	Text = tostring(State.V6Mult),
 })
-mk("UICorner", { Parent = v4MultBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = v4MultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+mk("UICorner", { Parent = v6MultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v6MultBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
 mk("TextLabel", {
-	Parent = boxV4,
+	Parent = boxV6,
 	Position = UDim2.new(0, 160, 0, 116),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
@@ -1940,8 +1778,8 @@ mk("TextLabel", {
 	Text = "AddSpeed (-400..400)",
 })
 
-local v4AddBox = mk("TextBox", {
-	Parent = boxV4,
+local v6AddBox = mk("TextBox", {
+	Parent = boxV6,
 	Position = UDim2.new(0, 160, 0, 134),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
@@ -1950,13 +1788,13 @@ local v4AddBox = mk("TextBox", {
 	ClearTextOnFocus = false,
 	Font = Enum.Font.GothamSemibold,
 	TextSize = 12,
-	Text = tostring(State.V4Add),
+	Text = tostring(State.V6Add),
 })
-mk("UICorner", { Parent = v4AddBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = v4AddBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+mk("UICorner", { Parent = v6AddBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v6AddBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
 mk("TextLabel", {
-	Parent = boxV4,
+	Parent = boxV6,
 	Position = UDim2.new(0, 308, 0, 116),
 	Size = UDim2.new(0, 160, 0, 16),
 	BackgroundTransparency = 1,
@@ -1964,11 +1802,11 @@ mk("TextLabel", {
 	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextColor3 = COL_SUB,
-	Text = "MaxSpeed (0-400)",
+	Text = "MaxSpeed (0-4000)",
 })
 
-local v4MaxBox = mk("TextBox", {
-	Parent = boxV4,
+local v6MaxBox = mk("TextBox", {
+	Parent = boxV6,
 	Position = UDim2.new(0, 308, 0, 134),
 	Size = UDim2.new(0, 130, 0, 22),
 	BackgroundColor3 = Color3.fromRGB(26,26,26),
@@ -1977,13 +1815,13 @@ local v4MaxBox = mk("TextBox", {
 	ClearTextOnFocus = false,
 	Font = Enum.Font.GothamSemibold,
 	TextSize = 12,
-	Text = tostring(State.V4Max),
+	Text = tostring(State.V6Max),
 })
-mk("UICorner", { Parent = v4MaxBox, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = v4MaxBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+mk("UICorner", { Parent = v6MaxBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v6MaxBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
 
-local v4ApplyBtn = mk("TextButton", {
-	Parent = boxV4,
+local v6ApplyBtn = mk("TextButton", {
+	Parent = boxV6,
 	Position = UDim2.new(0, 12, 0, 176),
 	Size = UDim2.new(0, 120, 0, 26),
 	BackgroundColor3 = COL_PURP,
@@ -1994,9 +1832,8 @@ local v4ApplyBtn = mk("TextButton", {
 	Text = "APPLY",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = v4ApplyBtn, CornerRadius = UDim.new(0, 8) })
+mk("UICorner", { Parent = v6ApplyBtn, CornerRadius = UDim.new(0, 8) })
 
--- VISUALS PAGE
 local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
 local espToggle = toggleRow(boxV, 44, "Titan ESP (Nape)")
 local refillToggle = toggleRow(boxV, 78, "Refill ESP")
@@ -2042,7 +1879,6 @@ local espApplyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = espApplyBtn, CornerRadius = UDim.new(0, 8) })
 
--- TITAN EYES PAGE
 local boxE = sectionBox(pageTitanEyes, 16, 16, 460, 340, "Titan Eyes")
 local eyesToggle = toggleRow(boxE, 44, "Expand Eyes")
 
@@ -2087,7 +1923,6 @@ local eyesApplyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = eyesApplyBtn, CornerRadius = UDim.new(0, 8) })
 
--- PLAYERS PAGE
 local boxP = sectionBox(pagePlayers, 16, 16, 460, 340, "Players")
 local plrEspToggle = toggleRow(boxP, 44, "Player ESP")
 local headExpandToggle = toggleRow(boxP, 78, "Expand Head")
@@ -2162,7 +1997,6 @@ local plrApplyBtn = mk("TextButton", {
 })
 mk("UICorner", { Parent = plrApplyBtn, CornerRadius = UDim.new(0, 8) })
 
--- MISC PAGE
 local boxF = sectionBox(pageMisc, 16, 16, 460, 340, "Misc")
 local safeFallToggle = toggleRow(boxF, 44, "Safe Fall (Soft Land)")
 
@@ -2263,7 +2097,6 @@ local nearGroundApply = mk("TextButton", {
 })
 mk("UICorner", { Parent = nearGroundApply, CornerRadius = UDim.new(0, 8) })
 
--- UI SETTINGS PAGE
 local boxU = sectionBox(pageUI, 16, 16, 460, 340, "UI Settings")
 mk("TextLabel", {
 	Parent = boxU,
@@ -2348,21 +2181,12 @@ makeSideTab(100, "Titan Eyes", "Titan Eyes")
 makeSideTab(144, "Players", "Players")
 makeSideTab(188, "Misc", "Misc")
 makeSideTab(232, "UI Settings", "UI Settings")
-makeSideTab(276, "Velocity V4", "Velocity V4")
+makeSideTab(276, "Velocity V6", "Velocity V6")
 
 local bindingSafeFall = false
-local bindingVel = false
 
 local function refreshBindText()
 	bindBtn.Text = "Keybind: " .. keyName(State.SafeFallKey) .. (bindingSafeFall and " (Press a key...)" or " (Click to set)")
-end
-
-local function refreshVelBindText()
-	local mode = State.VelocityUseKeybind and "On" or "Off"
-	velBindBtn.Text = "Keybind: " .. keyName(State.VelocityKey) .. " (" .. mode .. ")"
-	if bindingVel then
-		velBindBtn.Text = "Keybind: (Press a key...)"
-	end
 end
 
 local function applyMultiplier()
@@ -2374,6 +2198,26 @@ local function applyMultiplier()
 	n = math.floor(n + 0.5)
 	n = math.clamp(n, 1, 30)
 	State.NapeMult = n
+	patchAllTitans()
+end
+
+local function applyNapeXYZConfig()
+	local x = tonumber(napeXBox.Text)
+	local y = tonumber(napeYBox.Text)
+	local z = tonumber(napeZBox.Text)
+
+	if not x then x = State.NapeScaleX end
+	if not y then y = State.NapeScaleY end
+	if not z then z = State.NapeScaleZ end
+
+	State.NapeScaleX = math.clamp(x, 0.05, 30000)
+	State.NapeScaleY = math.clamp(y, 0.05, 30000)
+	State.NapeScaleZ = math.clamp(z, 0.05, 30000)
+
+	napeXBox.Text = tostring(State.NapeScaleX)
+	napeYBox.Text = tostring(State.NapeScaleY)
+	napeZBox.Text = tostring(State.NapeScaleZ)
+
 	patchAllTitans()
 end
 
@@ -2425,44 +2269,24 @@ local function applyNearGround()
 	nearGroundBox.Text = tostring(State.NearGroundDist)
 end
 
-local function applyVelConfig()
-	local m = tonumber(velMultBox.Text)
-	if not m then m = State.VelocityMult end
-	m = math.clamp(m, 1, 2)
-	State.VelocityMult = m
-	velMultBox.Text = tostring(State.VelocityMult)
+local function applyV6Config()
+	local m = tonumber(v6MultBox.Text)
+	if not m then m = State.V6Mult end
+	m = math.clamp(m, 0, 10)
+	State.V6Mult = m
+	v6MultBox.Text = tostring(State.V6Mult)
 
-	local a = tonumber(velAddBox.Text)
-	if not a then a = State.VelocityAddSpeed end
-	a = math.clamp(a, 0, 125)
-	State.VelocityAddSpeed = a
-	velAddBox.Text = tostring(State.VelocityAddSpeed)
-
-	local ms = tonumber(velMaxBox.Text)
-	if not ms then ms = State.VelocityMaxSpeed end
-	ms = math.clamp(ms, 0, 300)
-	State.VelocityMaxSpeed = ms
-	velMaxBox.Text = tostring(State.VelocityMaxSpeed)
-end
-
-local function applyV4Config()
-	local m = tonumber(v4MultBox.Text)
-	if not m then m = State.V4Mult end
-	m = math.clamp(m, 0, 5)
-	State.V4Mult = m
-	v4MultBox.Text = tostring(State.V4Mult)
-
-	local a = tonumber(v4AddBox.Text)
-	if not a then a = State.V4Add end
+	local a = tonumber(v6AddBox.Text)
+	if not a then a = State.V6Add end
 	a = math.clamp(a, -400, 400)
-	State.V4Add = a
-	v4AddBox.Text = tostring(State.V4Add)
+	State.V6Add = a
+	v6AddBox.Text = tostring(State.V6Add)
 
-	local ms = tonumber(v4MaxBox.Text)
-	if not ms then ms = State.V4Max end
-	ms = math.clamp(ms, 0, 400)
-	State.V4Max = ms
-	v4MaxBox.Text = tostring(State.V4Max)
+	local ms = tonumber(v6MaxBox.Text)
+	if not ms then ms = State.V6Max end
+	ms = math.clamp(ms, 0, 4000)
+	State.V6Max = ms
+	v6MaxBox.Text = tostring(State.V6Max)
 end
 
 local function applyPlayerConfig()
@@ -2484,6 +2308,7 @@ end
 local function refresh()
 	setToggle(napeToggle, State.NapeEnabled)
 	setToggle(grabHBtoggle, State.DisableGrabHitboxes)
+	setToggle(napeXYZToggle, State.NapeUseXYZ)
 
 	setToggle(espToggle, State.TitanESP)
 	setToggle(refillToggle, State.RefillESP)
@@ -2496,28 +2321,26 @@ local function refresh()
 	setToggle(noTouchToggle, State.PlayerNoTouch)
 
 	setToggle(safeFallToggle, State.SafeFallEnabled)
-	setToggle(velToggle, State.VelocityEnabled)
-	setToggle(v4Toggle, State.V4Enabled)
+	setToggle(v6Toggle, State.V6Enabled)
 
 	multBox.Text = tostring(State.NapeMult)
+	napeXBox.Text = tostring(State.NapeScaleX)
+	napeYBox.Text = tostring(State.NapeScaleY)
+	napeZBox.Text = tostring(State.NapeScaleZ)
+
 	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
 	eyesMultBox.Text = tostring(State.TitanEyesMult)
 	minFallBox.Text = tostring(State.MinFallTime)
 	nearGroundBox.Text = tostring(State.NearGroundDist)
 
-	velMultBox.Text = tostring(State.VelocityMult)
-	velAddBox.Text = tostring(State.VelocityAddSpeed)
-	velMaxBox.Text = tostring(State.VelocityMaxSpeed)
-
-	v4MultBox.Text = tostring(State.V4Mult)
-	v4AddBox.Text = tostring(State.V4Add)
-	v4MaxBox.Text = tostring(State.V4Max)
+	v6MultBox.Text = tostring(State.V6Mult)
+	v6AddBox.Text = tostring(State.V6Add)
+	v6MaxBox.Text = tostring(State.V6Max)
 
 	headMultBox.Text = tostring(State.PlayerHeadMult)
 	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
 
 	refreshBindText()
-	refreshVelBindText()
 
 	if not State.TitanESP then
 		espDetachAllTitans()
@@ -2527,8 +2350,8 @@ local function refresh()
 		detachAllRefillESP()
 	end
 
-	if not State.V4Enabled then
-		pcall(function() VeloMultiplierV4.Stop() end)
+	if not State.V6Enabled then
+		pcall(function() VeloMultiplierV6.Stop() end)
 	end
 
 	refreshAllPlayerESP()
@@ -2548,12 +2371,11 @@ local function unload()
 	State.RefillESP = false
 	State.PlayerESP = false
 	State.SafeFallEnabled = false
-	State.VelocityEnabled = false
 	State.TitanEyesEnabled = false
 	State.PlayerNoTouch = false
-	State.V4Enabled = false
+	State.V6Enabled = false
 
-	pcall(function() VeloMultiplierV4.Stop() end)
+	pcall(function() VeloMultiplierV6.Stop() end)
 
 	espDetachAllTitans()
 	detachAllRefillESP()
@@ -2566,7 +2388,6 @@ local function unload()
 	end
 end
 
--- UI EVENTS
 track(closeBtn.MouseButton1Click:Connect(function()
 	unload()
 end))
@@ -2586,6 +2407,49 @@ track(grabHBtoggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.DisableGrabHitboxes = not State.DisableGrabHitboxes
 	patchAllTitans()
+	refresh()
+end))
+
+track(napeXYZToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.NapeUseXYZ = not State.NapeUseXYZ
+	patchAllTitans()
+	refresh()
+end))
+
+track(applyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyMultiplier()
+	refresh()
+end))
+
+track(multBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyMultiplier()
+	refresh()
+end))
+
+track(napeXYZApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeXBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeYBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeZBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
 	refresh()
 end))
 
@@ -2700,97 +2564,42 @@ track(safeFallToggle.MouseButton1Click:Connect(function()
 	refresh()
 end))
 
-track(velToggle.MouseButton1Click:Connect(function()
+track(v6Toggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
-	State.VelocityEnabled = not State.VelocityEnabled
-	refresh()
-end))
-
-track(velPlus.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.VelocityUseKeybind = not State.VelocityUseKeybind
-	refresh()
-end))
-
-track(velBindBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	bindingVel = not bindingVel
-	refresh()
-end))
-
-track(velApplyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velMultBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velAddBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
-track(velMaxBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyVelConfig()
-	refresh()
-end))
-
--- V4 UI
-track(v4Toggle.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	State.V4Enabled = not State.V4Enabled
-	if not State.V4Enabled then
-		pcall(function() VeloMultiplierV4.Stop() end)
+	State.V6Enabled = not State.V6Enabled
+	if not State.V6Enabled then
+		pcall(function() VeloMultiplierV6.Stop() end)
 	end
 	refresh()
 end))
 
-track(v4ApplyBtn.MouseButton1Click:Connect(function()
+track(v6ApplyBtn.MouseButton1Click:Connect(function()
 	if unloaded then return end
-	applyV4Config()
+	applyV6Config()
 	refresh()
 end))
 
-track(v4MultBox.FocusLost:Connect(function()
+track(v6MultBox.FocusLost:Connect(function()
 	if unloaded then return end
-	applyV4Config()
+	applyV6Config()
 	refresh()
 end))
 
-track(v4AddBox.FocusLost:Connect(function()
+track(v6AddBox.FocusLost:Connect(function()
 	if unloaded then return end
-	applyV4Config()
+	applyV6Config()
 	refresh()
 end))
 
-track(v4MaxBox.FocusLost:Connect(function()
+track(v6MaxBox.FocusLost:Connect(function()
 	if unloaded then return end
-	applyV4Config()
+	applyV6Config()
 	refresh()
 end))
 
 track(bindBtn.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	bindingSafeFall = not bindingSafeFall
-	refresh()
-end))
-
-track(applyBtn.MouseButton1Click:Connect(function()
-	if unloaded then return end
-	applyMultiplier()
-	refresh()
-end))
-
-track(multBox.FocusLost:Connect(function()
-	if unloaded then return end
-	applyMultiplier()
 	refresh()
 end))
 
@@ -2835,7 +2644,6 @@ track(resetPos.MouseButton1Click:Connect(function()
 	main.Position = UDim2.new(0.15, 0, 0.2, 0)
 end))
 
--- Drag
 do
 	local dragging = false
 	local dragStart, startPos
@@ -2865,7 +2673,6 @@ do
 	end))
 end
 
--- Minimize
 local minimized = false
 local fullSize = main.Size
 
@@ -2878,7 +2685,6 @@ track(minimizeBtn.MouseButton1Click:Connect(function()
 	minimizeBtn.Text = minimized and "+" or "–"
 end))
 
--- Keybind handler
 track(UserInputService.InputBegan:Connect(function(input, gp)
 	if unloaded then return end
 	if gp then return end
@@ -2893,46 +2699,15 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 		return
 	end
 
-	if bindingVel then
-		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
-			State.VelocityKey = input.KeyCode
-			bindingVel = false
-			refresh()
-		end
-		return
-	end
-
 	if input.KeyCode == Enum.KeyCode.LeftAlt then
 		gui.Enabled = not gui.Enabled
 		return
-	end
-
-	-- VelocityBoost hold (your existing system)
-	if input.KeyCode == Enum.KeyCode.H then
-		VelocityBoost.SetHoldingH(true)
 	end
 
 	if input.KeyCode == State.SafeFallKey then
 		State.SafeFallEnabled = not State.SafeFallEnabled
 		refresh()
 		return
-	end
-
-	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
-		VelocityBoost.SetBoostingHold(true)
-	end
-end))
-
-track(UserInputService.InputEnded:Connect(function(input, gp)
-	if unloaded then return end
-	if gp then return end
-
-	if input.KeyCode == Enum.KeyCode.H then
-		VelocityBoost.SetHoldingH(false)
-	end
-
-	if State.VelocityUseKeybind and input.KeyCode == State.VelocityKey then
-		VelocityBoost.SetBoostingHold(false)
 	end
 end))
 
