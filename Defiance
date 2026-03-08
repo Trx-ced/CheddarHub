@@ -55,6 +55,12 @@ local State = {
 	V6FloorSinkTolerance = 0.9,
 	V6WallCheckDist = 3.5,
 	V6WallSlideLoss = 0.95,
+
+	V7Enabled = false,
+	V7Value = 10,
+	HandcutDisableEnabled = false,
+	HandcutDeleteEnabled = false,
+	GiveHandcutEnabled = false,
 }
 
 local Connections = {}
@@ -1366,6 +1372,218 @@ do
 	end
 end
 
+local BlatantRuntime = {}
+do
+	local deleteToolConnections = {}
+
+	local function disconnectDeleteToolConnections()
+		for tool, conn in pairs(deleteToolConnections) do
+			pcall(function()
+				conn:Disconnect()
+			end)
+			deleteToolConnections[tool] = nil
+		end
+	end
+
+	local function getVelocityMultiValue()
+		local statistics = ReplicatedStorage:FindFirstChild("Statistics")
+		if not statistics then return nil end
+		local dmg = statistics:FindFirstChild("3DMG")
+		if not dmg then return nil end
+		return dmg:FindFirstChild("VelocityMulti")
+	end
+
+	local function applyVelocityMulti()
+		local velocity = getVelocityMultiValue()
+		if velocity and velocity:IsA("NumberValue") then
+			velocity.Value = math.clamp(State.V7Value, 1, 10)
+		elseif velocity and velocity:IsA("IntValue") then
+			velocity.Value = math.floor(math.clamp(State.V7Value, 1, 10) + 0.5)
+		end
+	end
+
+	local function applyDisableHandcutEffects()
+		local sfx = ReplicatedStorage:FindFirstChild("SFX")
+		if sfx then
+			local tools = sfx:FindFirstChild("Tools")
+			if tools then
+				local sound = tools:FindFirstChild("HandCutter")
+				if sound and sound:IsA("Sound") then
+					sound.Volume = 0
+					sound.Playing = false
+				end
+			end
+		end
+
+		local initializer = ReplicatedStorage:FindFirstChild("Initializer")
+		if initializer then
+			local effectsRoot = initializer:FindFirstChild("Effects")
+			if effectsRoot then
+				local handCutter = effectsRoot:FindFirstChild("HandCutter")
+				if handCutter then
+					local impact = handCutter:FindFirstChild("Impact")
+					if impact then
+						for _, v in ipairs(impact:GetDescendants()) do
+							if v:IsA("ParticleEmitter") or v:IsA("Trail") then
+								v.Enabled = false
+							end
+						end
+					end
+
+					local slashPart = handCutter:FindFirstChild("SlashPart")
+					if slashPart then
+						for _, v in ipairs(slashPart:GetDescendants()) do
+							if v:IsA("ParticleEmitter") or v:IsA("Trail") then
+								v.Enabled = false
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local function deleteHandcutEffects()
+		local sfxFolder = ReplicatedStorage:FindFirstChild("SFX")
+		if sfxFolder then
+			local tools = sfxFolder:FindFirstChild("Tools")
+			if tools then
+				local sound = tools:FindFirstChild("HandCutter")
+				if sound then
+					sound:Destroy()
+				end
+			end
+		end
+
+		local effects = ReplicatedStorage:FindFirstChild("Initializer")
+		if effects then
+			local effectsFolder = effects:FindFirstChild("Effects")
+			if effectsFolder then
+				local hc = effectsFolder:FindFirstChild("HandCutter")
+				if hc then
+					local impact = hc:FindFirstChild("Impact")
+					if impact then
+						impact:Destroy()
+					end
+
+					local slashPart = hc:FindFirstChild("SlashPart")
+					if slashPart then
+						local emitter = slashPart:FindFirstChild("ParticleEmitter")
+						if emitter then emitter:Destroy() end
+						local wind = slashPart:FindFirstChild("Wind")
+						if wind then wind:Destroy() end
+						local wind2 = slashPart:FindFirstChild("Wind2")
+						if wind2 then wind2:Destroy() end
+						local children = slashPart:GetChildren()
+						if children[5] then children[5]:Destroy() end
+						if children[4] then children[4]:Destroy() end
+					end
+				end
+			end
+		end
+	end
+
+	local function connectDeleteTool(tool)
+		if not tool or not tool:IsA("Tool") or tool.Name ~= "HandCutter" then return end
+		if deleteToolConnections[tool] then return end
+		deleteToolConnections[tool] = tool.Activated:Connect(function()
+			if State.HandcutDeleteEnabled then
+				deleteHandcutEffects()
+			end
+		end)
+		tool.AncestryChanged:Connect(function(_, parent)
+			if parent == nil and deleteToolConnections[tool] then
+				pcall(function()
+					deleteToolConnections[tool]:Disconnect()
+				end)
+				deleteToolConnections[tool] = nil
+			end
+		end)
+	end
+
+	local function hookDeleteTools()
+		if not State.HandcutDeleteEnabled then
+			disconnectDeleteToolConnections()
+			return
+		end
+		local backpack = player:FindFirstChild("Backpack")
+		if backpack then
+			for _, child in ipairs(backpack:GetChildren()) do
+				connectDeleteTool(child)
+			end
+		end
+		local char = player.Character
+		if char then
+			for _, child in ipairs(char:GetChildren()) do
+				connectDeleteTool(child)
+			end
+		end
+	end
+
+	local function giveHandcutTool()
+		local skillTools = ReplicatedStorage:FindFirstChild("SkillTools")
+		if not skillTools then return end
+		local skillTool = skillTools:FindFirstChild("HandCutter")
+		if not skillTool then return end
+
+		local backpack = player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 2)
+		local character = player.Character or player.CharacterAdded:Wait()
+		if not backpack or not character then return end
+
+		if backpack:FindFirstChild(skillTool.Name) or character:FindFirstChild(skillTool.Name) then
+			return
+		end
+
+		local clonedTool = skillTool:Clone()
+		clonedTool.Parent = backpack
+		if State.HandcutDeleteEnabled then
+			connectDeleteTool(clonedTool)
+		end
+	end
+
+	track(player.CharacterAdded:Connect(function()
+		if unloaded then return end
+		task.delay(0.5, function()
+			if unloaded then return end
+			hookDeleteTools()
+			if State.GiveHandcutEnabled then
+				giveHandcutTool()
+			end
+		end)
+	end))
+
+	track(player:WaitForChild("Backpack").ChildAdded:Connect(function(child)
+		if unloaded then return end
+		if State.HandcutDeleteEnabled then
+			connectDeleteTool(child)
+		end
+	end))
+
+	track(RunService.Heartbeat:Connect(function()
+		if unloaded then return end
+		if State.V7Enabled then
+			applyVelocityMulti()
+		end
+		if State.HandcutDisableEnabled then
+			applyDisableHandcutEffects()
+		end
+		if State.HandcutDeleteEnabled then
+			hookDeleteTools()
+		end
+		if State.GiveHandcutEnabled then
+			giveHandcutTool()
+		end
+	end))
+
+	function BlatantRuntime.RefreshDeleteHooks()
+		hookDeleteTools()
+	end
+
+	function BlatantRuntime.Stop()
+		disconnectDeleteToolConnections()
+	end
+end
+
 local function mk(t, props)
 	local inst = Instance.new(t)
 	for k, v in pairs(props or {}) do
@@ -1495,6 +1713,7 @@ local function newPage(name)
 end
 
 local pageMain = newPage("Main")
+local pageBlatant = newPage("Blatant")
 local pageVisuals = newPage("Visuals")
 local pageTitanEyes = newPage("Titan Eyes")
 local pagePlayers = newPage("Players")
@@ -1570,6 +1789,107 @@ local function keyName(kc)
 	local p = s:match("^Enum%.KeyCode%.(.+)$")
 	return p or s
 end
+
+local blatantScroll = mk("ScrollingFrame", {
+	Parent = pageBlatant,
+	Position = UDim2.new(0, 0, 0, 0),
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 620),
+	ScrollBarThickness = 8,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	Active = true,
+	ScrollingEnabled = true,
+})
+
+local boxBlatant = sectionBox(blatantScroll, 16, 16, 460, 560, "Blatant")
+local v7Toggle = toggleRow(boxBlatant, 44, "Velocity Multi V7")
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 78),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Sets ReplicatedStorage.Statistics.3DMG.VelocityMulti while enabled.",
+})
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 108),
+	Size = UDim2.new(0, 220, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Velocity Value (1-10x)",
+})
+
+local v7ValueBox = mk("TextBox", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 126),
+	Size = UDim2.new(0, 300, 0, 24),
+	BackgroundColor3 = Color3.fromRGB(26,26,26),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.V7Value),
+})
+mk("UICorner", { Parent = v7ValueBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v7ValueBox, Color = COL_STROKE, Thickness = 1, Transparency = 0.55 })
+
+local v7ApplyBtn = mk("TextButton", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 322, 0, 126),
+	Size = UDim2.new(0, 120, 0, 24),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v7ApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local handcutDisableToggle = toggleRow(boxBlatant, 178, "Disable Handcut Effects")
+local handcutDeleteToggle = toggleRow(boxBlatant, 212, "Delete Handcut Effects")
+local giveHandcutToggle = toggleRow(boxBlatant, 246, "Give Handcut Tool")
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 282),
+	Size = UDim2.new(1, -24, 0, 36),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Note: do not have Disable Handcut Effects and Delete Handcut Effects on at the same time.",
+})
+
+local blatantNote = mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 334),
+	Size = UDim2.new(1, -24, 0, 200),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = COL_SUB,
+	Text = "Blatant page controls:\n\n• Velocity Multi V7 sets the 3DMG VelocityMulti value while the toggle is on.\n• Disable Handcut Effects turns off the HandCutter sound and particles/trails.\n• Delete Handcut Effects destroys the listed HandCutter sound/effect objects when the tool activates.\n• Give Handcut Tool clones HandCutter from ReplicatedStorage.SkillTools into your Backpack if you do not already have it.",
+})
 
 local boxA = sectionBox(pageMain, 16, 16, 460, 370, "Titan Settings")
 local napeToggle = toggleRow(boxA, 44, "Nape Hitbox (Nape + ServerHB)")
@@ -2176,12 +2496,13 @@ local function makeSideTab(y, text, name)
 end
 
 makeSideTab(12, "Main", "Main")
-makeSideTab(56, "Visuals", "Visuals")
-makeSideTab(100, "Titan Eyes", "Titan Eyes")
-makeSideTab(144, "Players", "Players")
-makeSideTab(188, "Misc", "Misc")
-makeSideTab(232, "UI Settings", "UI Settings")
-makeSideTab(276, "Velocity V6", "Velocity V6")
+makeSideTab(56, "Blatant", "Blatant")
+makeSideTab(100, "Visuals", "Visuals")
+makeSideTab(144, "Titan Eyes", "Titan Eyes")
+makeSideTab(188, "Players", "Players")
+makeSideTab(232, "Misc", "Misc")
+makeSideTab(276, "UI Settings", "UI Settings")
+makeSideTab(320, "Velocity V6", "Velocity V6")
 
 local bindingSafeFall = false
 
@@ -2219,6 +2540,17 @@ local function applyNapeXYZConfig()
 	napeZBox.Text = tostring(State.NapeScaleZ)
 
 	patchAllTitans()
+end
+
+local function applyV7Config()
+	local n = tonumber(v7ValueBox.Text)
+	if not n then
+		v7ValueBox.Text = tostring(State.V7Value)
+		return
+	end
+	n = math.clamp(n, 1, 10)
+	State.V7Value = n
+	v7ValueBox.Text = tostring(State.V7Value)
 end
 
 local function applyESPTrans()
@@ -2306,6 +2638,11 @@ local function applyPlayerConfig()
 end
 
 local function refresh()
+	setToggle(v7Toggle, State.V7Enabled)
+	setToggle(handcutDisableToggle, State.HandcutDisableEnabled)
+	setToggle(handcutDeleteToggle, State.HandcutDeleteEnabled)
+	setToggle(giveHandcutToggle, State.GiveHandcutEnabled)
+
 	setToggle(napeToggle, State.NapeEnabled)
 	setToggle(grabHBtoggle, State.DisableGrabHitboxes)
 	setToggle(napeXYZToggle, State.NapeUseXYZ)
@@ -2322,6 +2659,8 @@ local function refresh()
 
 	setToggle(safeFallToggle, State.SafeFallEnabled)
 	setToggle(v6Toggle, State.V6Enabled)
+
+	v7ValueBox.Text = tostring(State.V7Value)
 
 	multBox.Text = tostring(State.NapeMult)
 	napeXBox.Text = tostring(State.NapeScaleX)
@@ -2354,6 +2693,10 @@ local function refresh()
 		pcall(function() VeloMultiplierV6.Stop() end)
 	end
 
+	pcall(function()
+		BlatantRuntime.RefreshDeleteHooks()
+	end)
+
 	refreshAllPlayerESP()
 end
 
@@ -2374,8 +2717,13 @@ local function unload()
 	State.TitanEyesEnabled = false
 	State.PlayerNoTouch = false
 	State.V6Enabled = false
+	State.V7Enabled = false
+	State.HandcutDisableEnabled = false
+	State.HandcutDeleteEnabled = false
+	State.GiveHandcutEnabled = false
 
 	pcall(function() VeloMultiplierV6.Stop() end)
+	pcall(function() BlatantRuntime.Stop() end)
 
 	espDetachAllTitans()
 	detachAllRefillESP()
@@ -2394,6 +2742,45 @@ end))
 
 track(unloadBtn.MouseButton1Click:Connect(function()
 	unload()
+end))
+
+track(v7Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.V7Enabled = not State.V7Enabled
+	refresh()
+end))
+
+track(handcutDisableToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HandcutDisableEnabled = not State.HandcutDisableEnabled
+	refresh()
+end))
+
+track(handcutDeleteToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HandcutDeleteEnabled = not State.HandcutDeleteEnabled
+	pcall(function()
+		BlatantRuntime.RefreshDeleteHooks()
+	end)
+	refresh()
+end))
+
+track(giveHandcutToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.GiveHandcutEnabled = not State.GiveHandcutEnabled
+	refresh()
+end))
+
+track(v7ApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyV7Config()
+	refresh()
+end))
+
+track(v7ValueBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyV7Config()
+	refresh()
 end))
 
 track(napeToggle.MouseButton1Click:Connect(function()
