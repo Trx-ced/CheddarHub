@@ -12,21 +12,37 @@ local CharactersFolder = MainFolders:WaitForChild("Characters")
 local InteractablesFolder = MainFolders:WaitForChild("Interactables")
 
 local State = {
-	-- Main
-	NapeEnabled = false,
+	-- Main (Normal Titans / Mindless / Abnormals)
+	NapeEnabled = true,
 	NapeMultiplier = 5,
 
 	EyesEnabled = false,
 	EyesMultiplier = 5,
 
-	AntiGrabEnabled = false,
+	AntiGrabEnabled = true,
 
-	-- Visuals
-	NapeBoxEnabled = true,
+	-- Sentient Titans
+	SentientNapeEnabled = true,
+	SentientNapeMultiplier = 5,
+
+	SentientEyesEnabled = false,
+	SentientEyesMultiplier = 5,
+
+	SentientAntiGrabEnabled = true,
+
+	-- Visuals (Normal Titans)
+	NapeBoxEnabled = false,
 	NapeBoxTransparency = 0.65,
 
 	EyesBoxEnabled = true,
 	EyesBoxTransparency = 0.65,
+
+	-- Visuals (Sentient Titans)
+	SentientNapeBoxEnabled = false,
+	SentientNapeBoxTransparency = 0.65,
+
+	SentientEyesBoxEnabled = true,
+	SentientEyesBoxTransparency = 0.65,
 
 	TitanESP = false,
 	TitanESPBoxTransparency = 0.65,
@@ -157,6 +173,19 @@ local EXTRA_COLLIDER_NAMES = {
 	HeadCollision = true,
 }
 
+local SENTIENT_ANTI_GRAB_NAMES = {
+	Head = true,
+	Jaw = true,
+
+	LeftHand = true,
+	LeftLowerArm = true,
+	LeftUpperArm = true,
+
+	RightHand = true,
+	RightLowerArm = true,
+	RightUpperArm = true,
+}
+
 local function findPartByName(model, partName)
 	for _, obj in ipairs(model:GetDescendants()) do
 		if obj:IsA("BasePart") and obj.Name == partName then
@@ -168,6 +197,111 @@ end
 
 local function findNape(model)
 	return findPartByName(model, "Nape")
+end
+
+local function isSentientModel(model)
+	if not model or not model:IsA("Model") then
+		return false
+	end
+
+	local hitboxes = model:FindFirstChild("Hitboxes")
+	return hitboxes ~= nil and hitboxes:IsA("Folder")
+end
+
+local function findFirstBasePart(inst, targetName)
+	if not inst then
+		return nil
+	end
+
+	for _, obj in ipairs(inst:GetDescendants()) do
+		if obj:IsA("BasePart") and obj.Name == targetName then
+			return obj
+		end
+	end
+
+	return nil
+end
+
+local function findSentientNape(model)
+	local hitboxes = model:FindFirstChild("Hitboxes")
+	if not hitboxes then
+		return nil
+	end
+
+	local nape = hitboxes:FindFirstChild("Nape")
+	if nape and nape:IsA("BasePart") then
+		return nape
+	end
+
+	return findFirstBasePart(hitboxes, "Nape")
+end
+
+local function findSentientEyes(model)
+	local hitboxes = model:FindFirstChild("Hitboxes")
+	if not hitboxes then
+		return nil
+	end
+
+	local eyes = hitboxes:FindFirstChild("Eyes")
+	if eyes and eyes:IsA("BasePart") then
+		return eyes
+	end
+
+	return findFirstBasePart(hitboxes, "Eyes")
+end
+
+local function findSentientHead(model)
+	local head = model:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head
+	end
+
+	return findFirstBasePart(model, "Head")
+end
+
+local function findSentientJaw(model)
+	local head = findSentientHead(model)
+	if not head then
+		return nil
+	end
+
+	local lowerHinge = head:FindFirstChild("LowerHinge")
+	if not lowerHinge then
+		return nil
+	end
+
+	local jaw = lowerHinge:FindFirstChild("Jaw")
+	if jaw and jaw:IsA("BasePart") then
+		return jaw
+	end
+
+	return findFirstBasePart(lowerHinge, "Jaw")
+end
+
+local function findSentientLimbParts(model)
+	local parts = {}
+
+	for _, obj in ipairs(model:GetDescendants()) do
+		if obj:IsA("BasePart") and SENTIENT_ANTI_GRAB_NAMES[obj.Name] then
+			table.insert(parts, obj)
+		end
+	end
+
+	local jaw = findSentientJaw(model)
+	if jaw then
+		local exists = false
+		for _, p in ipairs(parts) do
+			if p == jaw then
+				exists = true
+				break
+			end
+		end
+		if not exists then
+			table.insert(parts, jaw)
+		end
+	end
+
+	return parts
 end
 
 local function storeBasePartState(part)
@@ -299,6 +433,34 @@ local function applyScaledPart(model, partName, enabled, multiplier, boxEnabled,
 	updatePartBox(part, boxEnabled, boxTransparency, boxName, boxColor)
 end
 
+local function applyScaledDirectPart(part, enabled, multiplier, boxEnabled, boxTransparency, boxName, boxColor)
+	if not part or not part:IsA("BasePart") then
+		return
+	end
+
+	storeBasePartState(part)
+
+	if enabled then
+		part.CanCollide = false
+		part.CanTouch = true
+		part.CanQuery = true
+		part.Massless = true
+		part.Anchored = false
+
+		local ox = part:GetAttribute("HB_OrigSizeX")
+		local oy = part:GetAttribute("HB_OrigSizeY")
+		local oz = part:GetAttribute("HB_OrigSizeZ")
+
+		if ox and oy and oz then
+			part.Size = Vector3.new(ox, oy, oz) * multiplier
+		end
+	else
+		restoreBasePartState(part)
+	end
+
+	updatePartBox(part, boxEnabled, boxTransparency, boxName, boxColor)
+end
+
 local function disableBasePart(part)
 	if not part or not part:IsA("BasePart") then
 		return
@@ -366,7 +528,45 @@ local function applyDisableGrabHitboxesToRig(rig)
 	end
 end
 
+local function applyDisableGrabHitboxesToSentient(model)
+	if not (model and model:IsA("Model")) then
+		return
+	end
+
+	local protectedParts = {}
+	local sentientNape = findSentientNape(model)
+	local sentientEyes = findSentientEyes(model)
+
+	if sentientNape then
+		protectedParts[sentientNape] = true
+	end
+	if sentientEyes then
+		protectedParts[sentientEyes] = true
+	end
+
+	local parts = findSentientLimbParts(model)
+
+	if not State.SentientAntiGrabEnabled then
+		for _, part in ipairs(parts) do
+			if not protectedParts[part] then
+				restoreBasePartState(part)
+			end
+		end
+		return
+	end
+
+	for _, part in ipairs(parts) do
+		if not protectedParts[part] then
+			disableBasePart(part)
+		end
+	end
+end
+
 local function applyToModel(model)
+	if isSentientModel(model) then
+		return
+	end
+
 	applyScaledPart(
 		model,
 		"Nape",
@@ -392,19 +592,63 @@ local function applyToModel(model)
 	applyDisableGrabHitboxesToRig(model)
 end
 
+local function applyToSentient(model)
+	if not isSentientModel(model) then
+		return
+	end
+
+	local nape = findSentientNape(model)
+	local eyes = findSentientEyes(model)
+
+	applyScaledDirectPart(
+		nape,
+		State.SentientNapeEnabled,
+		State.SentientNapeMultiplier,
+		State.SentientNapeBoxEnabled,
+		State.SentientNapeBoxTransparency,
+		"SentientNapePreviewBox",
+		Color3.fromRGB(255, 120, 70)
+	)
+
+	applyScaledDirectPart(
+		eyes,
+		State.SentientEyesEnabled,
+		State.SentientEyesMultiplier,
+		State.SentientEyesBoxEnabled,
+		State.SentientEyesBoxTransparency,
+		"SentientEyesPreviewBox",
+		Color3.fromRGB(255, 80, 120)
+	)
+
+	applyDisableGrabHitboxesToSentient(model)
+end
+
 local function applyToAllTitans()
 	for _, titan in ipairs(TitansFolder:GetChildren()) do
-		applyToModel(titan)
+		if isSentientModel(titan) then
+			applyToSentient(titan)
+		else
+			applyToModel(titan)
+		end
 	end
 end
 
 track(TitansFolder.ChildAdded:Connect(function(model)
 	task.wait(0.15)
-	applyToModel(model)
+
+	if isSentientModel(model) then
+		applyToSentient(model)
+	else
+		applyToModel(model)
+	end
 
 	task.delay(0.75, function()
 		if model and model.Parent then
-			applyToModel(model)
+			if isSentientModel(model) then
+				applyToSentient(model)
+			else
+				applyToModel(model)
+			end
 		end
 	end)
 end))
@@ -482,7 +726,7 @@ local function attachTitanESP(model)
 		return
 	end
 
-	local nape = findNape(model)
+	local nape = isSentientModel(model) and findSentientNape(model) or findNape(model)
 	if not nape then
 		return
 	end
@@ -1243,6 +1487,7 @@ local COL_OFF = Color3.fromRGB(68, 42, 92)
 local COL_ACCENT = Color3.fromRGB(145, 82, 255)
 local COL_TAB = Color3.fromRGB(18, 18, 30)
 local COL_TAB_ACTIVE = Color3.fromRGB(80, 48, 145)
+local COL_SENTIENT_ACCENT = Color3.fromRGB(255, 118, 72)
 
 local gui = mk("ScreenGui", {
 	Name = "CheddarCheeseAgonyUI",
@@ -1353,7 +1598,7 @@ local function createPage(name)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 6,
-		CanvasSize = UDim2.new(0, 0, 0, 1100),
+		CanvasSize = UDim2.new(0, 0, 0, 1200),
 		Visible = false,
 	})
 	pages[name] = scroller
@@ -1474,6 +1719,7 @@ local function createInfo(parent, y, text, height)
 end
 
 local pageMain = createPage("Main")
+local pageSentient = createPage("Sentient")
 local pageVelocity = createPage("Velocity")
 local pageVisuals = createPage("Visuals")
 local pagePlayers = createPage("Players")
@@ -1489,6 +1735,18 @@ local eyesMultBox, eyesMultApply = createBox(eyesCard, 88, "Eyes Multiplier (1-3
 local antiGrabCard = createCard(pageMain, 16, 348, 560, 150, "Anti Grab")
 local antiGrabToggle = createToggle(antiGrabCard, 52, "Disable Titan Grab Hitboxes")
 createInfo(antiGrabCard, 88, "Disables collision / touch / query on titan grab-related collision parts and limb hitboxes while keeping nape logic separate.", 46)
+
+local sentientNapeCard = createCard(pageSentient, 16, 16, 560, 150, "Sentient Nape")
+local sentientNapeToggle = createToggle(sentientNapeCard, 52, "Enable Sentient Nape Expander")
+local sentientNapeMultBox, sentientNapeMultApply = createBox(sentientNapeCard, 88, "Sentient Nape Multiplier (1-30)", State.SentientNapeMultiplier)
+
+local sentientEyesCard = createCard(pageSentient, 16, 182, 560, 150, "Sentient Eyes")
+local sentientEyesToggle = createToggle(sentientEyesCard, 52, "Enable Sentient Eyes Expander")
+local sentientEyesMultBox, sentientEyesMultApply = createBox(sentientEyesCard, 88, "Sentient Eyes Multiplier (1-30)", State.SentientEyesMultiplier)
+
+local sentientAntiGrabCard = createCard(pageSentient, 16, 348, 560, 170, "Sentient Anti Grab")
+local sentientAntiGrabToggle = createToggle(sentientAntiGrabCard, 52, "Disable Sentient Grab Parts")
+createInfo(sentientAntiGrabCard, 88, "Disables touch / query / collision on Sentient head, jaw, upper arms, lower arms, and hands. A Sentient is any titan model with a Hitboxes folder.", 60)
 
 local velocityCard = createCard(pageVelocity, 16, 16, 560, 430, "Velocity")
 local velocityToggle = createToggle(velocityCard, 52, "Enable Velocity")
@@ -1514,18 +1772,24 @@ mk("UIStroke", {Parent = velocityBindBtn, Color = COL_STROKE_SOFT, Thickness = 1
 
 createInfo(velocityCard, 400, "Velocity boost activates while holding Q or E. If extra keybind is enabled, hold that too.", 30)
 
-local visualsCard = createCard(pageVisuals, 16, 16, 560, 500, "Visuals")
+local visualsCard = createCard(pageVisuals, 16, 16, 560, 760, "Visuals")
 local titanEspToggle = createToggle(visualsCard, 52, "Titan ESP")
 local titanEspTransBox, titanEspTransApply = createBox(visualsCard, 88, "Titan ESP Box Transparency (0-1)", State.TitanESPBoxTransparency)
 
 local playerEspToggle = createToggle(visualsCard, 170, "Player ESP")
 local refillEspToggle = createToggle(visualsCard, 206, "Refills ESP")
 
-local napeBoxToggle = createToggle(visualsCard, 252, "Show Nape Preview")
-local napeTransBox, napeTransApply = createBox(visualsCard, 288, "Nape Box Transparency (0-1)", State.NapeBoxTransparency)
+local napeBoxToggle = createToggle(visualsCard, 252, "Show Normal Nape Preview")
+local napeTransBox, napeTransApply = createBox(visualsCard, 288, "Normal Nape Box Transparency (0-1)", State.NapeBoxTransparency)
 
-local eyesBoxToggle = createToggle(visualsCard, 370, "Show Eyes Preview")
-local eyesTransBox, eyesTransApply = createBox(visualsCard, 406, "Eyes Box Transparency (0-1)", State.EyesBoxTransparency)
+local eyesBoxToggle = createToggle(visualsCard, 370, "Show Normal Eyes Preview")
+local eyesTransBox, eyesTransApply = createBox(visualsCard, 406, "Normal Eyes Box Transparency (0-1)", State.EyesBoxTransparency)
+
+local sentientNapeBoxToggle = createToggle(visualsCard, 488, "Show Sentient Nape Preview")
+local sentientNapeTransBox, sentientNapeTransApply = createBox(visualsCard, 524, "Sentient Nape Box Transparency (0-1)", State.SentientNapeBoxTransparency)
+
+local sentientEyesBoxToggle = createToggle(visualsCard, 606, "Show Sentient Eyes Preview")
+local sentientEyesTransBox, sentientEyesTransApply = createBox(visualsCard, 642, "Sentient Eyes Box Transparency (0-1)", State.SentientEyesBoxTransparency)
 
 local playersCard = createCard(pagePlayers, 16, 16, 560, 360, "Players")
 local playerEspTogglePlayers = createToggle(playersCard, 52, "Player ESP")
@@ -1591,6 +1855,10 @@ local function refreshUI()
 	setToggleVisual(eyesToggle, State.EyesEnabled)
 	setToggleVisual(antiGrabToggle, State.AntiGrabEnabled)
 
+	setToggleVisual(sentientNapeToggle, State.SentientNapeEnabled)
+	setToggleVisual(sentientEyesToggle, State.SentientEyesEnabled)
+	setToggleVisual(sentientAntiGrabToggle, State.SentientAntiGrabEnabled)
+
 	setToggleVisual(velocityToggle, State.VelocityEnabled)
 	setToggleVisual(velocityKeyToggle, State.VelocityUseKeybind)
 
@@ -1598,21 +1866,31 @@ local function refreshUI()
 	setToggleVisual(playerEspToggle, State.PlayerESP)
 	setToggleVisual(playerEspTogglePlayers, State.PlayerESP)
 	setToggleVisual(refillEspToggle, State.RefillESP)
+
 	setToggleVisual(napeBoxToggle, State.NapeBoxEnabled)
 	setToggleVisual(eyesBoxToggle, State.EyesBoxEnabled)
+	setToggleVisual(sentientNapeBoxToggle, State.SentientNapeBoxEnabled)
+	setToggleVisual(sentientEyesBoxToggle, State.SentientEyesBoxEnabled)
 
 	setToggleVisual(safeFallToggle, State.SafeFallEnabled)
 
 	napeMultBox.Text = tostring(State.NapeMultiplier)
 	eyesMultBox.Text = tostring(State.EyesMultiplier)
 
+	sentientNapeMultBox.Text = tostring(State.SentientNapeMultiplier)
+	sentientEyesMultBox.Text = tostring(State.SentientEyesMultiplier)
+
 	velocityMultBox.Text = tostring(State.VelocityMultiplier)
 	velocityAddBox.Text = tostring(State.VelocityAddSpeed)
 	velocityMaxBox.Text = tostring(State.VelocityMaxSpeed)
 
 	titanEspTransBox.Text = tostring(State.TitanESPBoxTransparency)
+
 	napeTransBox.Text = tostring(State.NapeBoxTransparency)
 	eyesTransBox.Text = tostring(State.EyesBoxTransparency)
+
+	sentientNapeTransBox.Text = tostring(State.SentientNapeBoxTransparency)
+	sentientEyesTransBox.Text = tostring(State.SentientEyesBoxTransparency)
 
 	minFallBox.Text = tostring(State.MinFallTime)
 	nearGroundBox.Text = tostring(State.NearGroundDist)
@@ -1657,9 +1935,10 @@ local function createTab(y, text, pageName)
 end
 
 createTab(16, "Main", "Main")
-createTab(60, "Velocity", "Velocity")
-createTab(104, "Visuals", "Visuals")
-createTab(148, "Players", "Players")
+createTab(60, "Sentient", "Sentient")
+createTab(104, "Velocity", "Velocity")
+createTab(148, "Visuals", "Visuals")
+createTab(192, "Players", "Players")
 
 local function applyNapeMultiplier()
 	local n = tonumber(napeMultBox.Text)
@@ -1684,6 +1963,32 @@ local function applyEyesMultiplier()
 	n = math.clamp(math.floor(n + 0.5), 1, 30)
 	State.EyesMultiplier = n
 	eyesMultBox.Text = tostring(n)
+	applyToAllTitans()
+end
+
+local function applySentientNapeMultiplier()
+	local n = tonumber(sentientNapeMultBox.Text)
+	if not n then
+		sentientNapeMultBox.Text = tostring(State.SentientNapeMultiplier)
+		return
+	end
+
+	n = math.clamp(math.floor(n + 0.5), 1, 30)
+	State.SentientNapeMultiplier = n
+	sentientNapeMultBox.Text = tostring(n)
+	applyToAllTitans()
+end
+
+local function applySentientEyesMultiplier()
+	local n = tonumber(sentientEyesMultBox.Text)
+	if not n then
+		sentientEyesMultBox.Text = tostring(State.SentientEyesMultiplier)
+		return
+	end
+
+	n = math.clamp(math.floor(n + 0.5), 1, 30)
+	State.SentientEyesMultiplier = n
+	sentientEyesMultBox.Text = tostring(n)
 	applyToAllTitans()
 end
 
@@ -1757,6 +2062,32 @@ local function applyEyesTransparency()
 	applyToAllTitans()
 end
 
+local function applySentientNapeTransparency()
+	local n = tonumber(sentientNapeTransBox.Text)
+	if not n then
+		sentientNapeTransBox.Text = tostring(State.SentientNapeBoxTransparency)
+		return
+	end
+
+	n = math.clamp(n, 0, 1)
+	State.SentientNapeBoxTransparency = n
+	sentientNapeTransBox.Text = tostring(n)
+	applyToAllTitans()
+end
+
+local function applySentientEyesTransparency()
+	local n = tonumber(sentientEyesTransBox.Text)
+	if not n then
+		sentientEyesTransBox.Text = tostring(State.SentientEyesBoxTransparency)
+		return
+	end
+
+	n = math.clamp(n, 0, 1)
+	State.SentientEyesBoxTransparency = n
+	sentientEyesTransBox.Text = tostring(n)
+	applyToAllTitans()
+end
+
 local function applyMinFall()
 	local n = tonumber(minFallBox.Text)
 	if not n then
@@ -1815,6 +2146,44 @@ end))
 
 track(antiGrabToggle.MouseButton1Click:Connect(function()
 	State.AntiGrabEnabled = not State.AntiGrabEnabled
+	applyToAllTitans()
+	refreshUI()
+end))
+
+track(sentientNapeToggle.MouseButton1Click:Connect(function()
+	State.SentientNapeEnabled = not State.SentientNapeEnabled
+	applyToAllTitans()
+	refreshUI()
+end))
+
+track(sentientNapeMultApply.MouseButton1Click:Connect(function()
+	applySentientNapeMultiplier()
+	refreshUI()
+end))
+
+track(sentientNapeMultBox.FocusLost:Connect(function()
+	applySentientNapeMultiplier()
+	refreshUI()
+end))
+
+track(sentientEyesToggle.MouseButton1Click:Connect(function()
+	State.SentientEyesEnabled = not State.SentientEyesEnabled
+	applyToAllTitans()
+	refreshUI()
+end))
+
+track(sentientEyesMultApply.MouseButton1Click:Connect(function()
+	applySentientEyesMultiplier()
+	refreshUI()
+end))
+
+track(sentientEyesMultBox.FocusLost:Connect(function()
+	applySentientEyesMultiplier()
+	refreshUI()
+end))
+
+track(sentientAntiGrabToggle.MouseButton1Click:Connect(function()
+	State.SentientAntiGrabEnabled = not State.SentientAntiGrabEnabled
 	applyToAllTitans()
 	refreshUI()
 end))
@@ -1928,6 +2297,38 @@ end))
 
 track(eyesTransBox.FocusLost:Connect(function()
 	applyEyesTransparency()
+	refreshUI()
+end))
+
+track(sentientNapeBoxToggle.MouseButton1Click:Connect(function()
+	State.SentientNapeBoxEnabled = not State.SentientNapeBoxEnabled
+	applyToAllTitans()
+	refreshUI()
+end))
+
+track(sentientNapeTransApply.MouseButton1Click:Connect(function()
+	applySentientNapeTransparency()
+	refreshUI()
+end))
+
+track(sentientNapeTransBox.FocusLost:Connect(function()
+	applySentientNapeTransparency()
+	refreshUI()
+end))
+
+track(sentientEyesBoxToggle.MouseButton1Click:Connect(function()
+	State.SentientEyesBoxEnabled = not State.SentientEyesBoxEnabled
+	applyToAllTitans()
+	refreshUI()
+end))
+
+track(sentientEyesTransApply.MouseButton1Click:Connect(function()
+	applySentientEyesTransparency()
+	refreshUI()
+end))
+
+track(sentientEyesTransBox.FocusLost:Connect(function()
+	applySentientEyesTransparency()
 	refreshUI()
 end))
 
