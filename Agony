@@ -16,8 +16,8 @@ local State = {
 	NapeEnabled = true,
 	NapeMultiplier = 5,
 
-	EyesEnabled = false,
-	EyesMultiplier = 5,
+	EyesEnabled = true,
+	EyesMultiplier = 2,
 
 	AntiGrabEnabled = true,
 
@@ -25,24 +25,24 @@ local State = {
 	SentientNapeEnabled = true,
 	SentientNapeMultiplier = 5,
 
-	SentientEyesEnabled = false,
-	SentientEyesMultiplier = 5,
+	SentientEyesEnabled = true,
+	SentientEyesMultiplier = 3,
 
 	SentientAntiGrabEnabled = true,
 
 	-- Visuals (Normal Titans)
 	NapeBoxEnabled = false,
-	NapeBoxTransparency = 0.65,
+	NapeBoxTransparency = 1,
 
 	EyesBoxEnabled = true,
-	EyesBoxTransparency = 0.65,
+	EyesBoxTransparency = 1,
 
 	-- Visuals (Sentient Titans)
 	SentientNapeBoxEnabled = false,
-	SentientNapeBoxTransparency = 0.65,
+	SentientNapeBoxTransparency = 1,
 
 	SentientEyesBoxEnabled = true,
-	SentientEyesBoxTransparency = 0.65,
+	SentientEyesBoxTransparency = 1,
 
 	TitanESP = false,
 	TitanESPBoxTransparency = 0.65,
