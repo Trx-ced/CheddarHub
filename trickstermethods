@@ -1,0 +1,2028 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local SETTINGS = {
+	NapeEnabled = true,
+	NapeMultipliers = {
+		Default = 12,
+		SharkTitan = 12,
+		Screecher = 14,
+		["Scary Monkey"] = 10,
+		["Scary Minotaur"] = 10,
+		Monkey = 15,
+		Minotaur = 18,
+		FourArm = 9,
+		Crawler = 18,
+		BackArm = 9,
+		Abnormal = 12,
+	},
+
+	GearEnabled = true,
+	Gear = {
+		RANGE = 6500,
+		HOOK_SPEED = 6500,
+		GAS_AMOUNT = 8000,
+		MAX_GAS = 8000,
+		MAX_VELOCITY = 500,
+		VELO_ADD = 0.2,
+		EXTRA_SPEED_VALUE = 20,
+		HOOK_VELO_FRACTION = 0.8,
+	},
+
+	TitanESPEnabled = false,
+	TitanESPTransparency = 0.65,
+	TitanESPKeybind = Enum.KeyCode.L,
+
+	CharacterESPEnabled = false,
+	CharacterESPTransparency = 0.65,
+	CharacterESPKeybind = Enum.KeyCode.K,
+
+	RefillESPEnabled = false,
+	RefillESPTransparency = 0.65,
+	RefillESPKeybind = Enum.KeyCode.J,
+
+	--// Shifter
+	ShifterNapeEnabled = true,
+	ShifterEyesEnabled = true,
+	ShifterESPEnabled = true,
+
+	ShifterNapeMultiplier = 10,
+	ShifterEyesMultiplier = 8,
+}
+
+local COLORS = {
+	BG = Color3.fromRGB(7, 10, 14),
+	TOP = Color3.fromRGB(11, 16, 24),
+	SIDE = Color3.fromRGB(9, 14, 21),
+	PANEL = Color3.fromRGB(14, 20, 30),
+	PANEL2 = Color3.fromRGB(18, 28, 42),
+	INPUT = Color3.fromRGB(9, 15, 24),
+	STROKE = Color3.fromRGB(35, 122, 200),
+	STROKE_SOFT = Color3.fromRGB(24, 82, 140),
+	TEXT = Color3.fromRGB(238, 245, 255),
+	SUB = Color3.fromRGB(155, 186, 220),
+	ON = Color3.fromRGB(31, 121, 201),
+	OFF = Color3.fromRGB(43, 56, 74),
+	ACCENT = Color3.fromRGB(49, 144, 224),
+	TAB = Color3.fromRGB(16, 23, 34),
+	TAB_ACTIVE = Color3.fromRGB(26, 52, 84),
+	SHINE = Color3.fromRGB(140, 214, 255),
+
+	SHIFTER_RED = Color3.fromRGB(255, 35, 35),
+	SHIFTER_RED_SOFT = Color3.fromRGB(255, 110, 110),
+}
+
+local titanTypesFolder = player:WaitForChild("PlayerScripts")
+	:WaitForChild("Framework")
+	:WaitForChild("Modules")
+	:WaitForChild("Titans")
+	:WaitForChild("TitanTypes")
+
+local odmgFolder = player:WaitForChild("PlayerScripts")
+	:WaitForChild("Framework")
+	:WaitForChild("Modules")
+	:WaitForChild("ODMG")
+
+local aliveTitans = Workspace:FindFirstChild("AliveTitans")
+local titanEspFolder = Workspace:FindFirstChild("AliveTitans") or Workspace:FindFirstChild("Titans") or Workspace
+local charactersFolder = Workspace:FindFirstChild("Characters")
+local placementsFolder = Workspace:FindFirstChild("PlacementsFolder")
+
+local uiState = {
+	currentPage = "Nape",
+	capturingKeybind = nil,
+	dragging = false,
+	dragStart = nil,
+	startPos = nil,
+}
+
+local function deepCopy(tbl)
+	local out = {}
+	for k, v in pairs(tbl) do
+		if type(v) == "table" then
+			out[k] = deepCopy(v)
+		else
+			out[k] = v
+		end
+	end
+	return out
+end
+
+local ORIGINAL_NAPE_MULTIPLIERS = deepCopy(SETTINGS.NapeMultipliers)
+
+local function safeRequire(moduleScript)
+	local ok, result = pcall(require, moduleScript)
+	if ok and type(result) == "table" then
+		return result
+	end
+	return nil
+end
+
+local function keyName(keyCode)
+	return tostring(keyCode):gsub("Enum.KeyCode.", "")
+end
+
+local function clamp01(n)
+	return math.clamp(tonumber(n) or 0, 0, 1)
+end
+
+local function numberOr(defaultValue, txt)
+	local n = tonumber(txt)
+	if n == nil then
+		return defaultValue
+	end
+	return n
+end
+
+local function mk(className, props)
+	local obj = Instance.new(className)
+	for k, v in pairs(props or {}) do
+		obj[k] = v
+	end
+	return obj
+end
+
+local function addCorner(obj, radius)
+	mk("UICorner", {
+		Parent = obj,
+		CornerRadius = UDim.new(0, radius),
+	})
+end
+
+local function addStroke(obj, color, thickness, transparency)
+	mk("UIStroke", {
+		Parent = obj,
+		Color = color,
+		Thickness = thickness,
+		Transparency = transparency or 0,
+	})
+end
+
+local function addGradient(obj, c1, c2, rotation)
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, c1),
+		ColorSequenceKeypoint.new(1, c2),
+	})
+	grad.Rotation = rotation or 90
+	grad.Parent = obj
+	return grad
+end
+
+local function getLocalRoot()
+	local character = player.Character
+	if character then
+		return character:FindFirstChild("HumanoidRootPart")
+	end
+	return nil
+end
+
+local function findNape(model)
+	if not model then
+		return nil
+	end
+	local nape = model:FindFirstChild("Nape", true)
+	if nape and nape:IsA("BasePart") then
+		return nape
+	end
+	return nil
+end
+
+local function findEyes(model)
+	if not model then
+		return {}
+	end
+
+	local eyes = {}
+	for _, obj in ipairs(model:GetDescendants()) do
+		if obj:IsA("BasePart") and obj.Name == "Eyes" then
+			table.insert(eyes, obj)
+		end
+	end
+	return eyes
+end
+
+local function isShifterModel(model)
+	return model and model:IsA("Model") and findNape(model) ~= nil
+end
+
+local function getShifterAdornee(model)
+	if not model then
+		return nil
+	end
+
+	return model:FindFirstChild("Head", true)
+		or model:FindFirstChild("HumanoidRootPart", true)
+		or findNape(model)
+		or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+--// Nape patch
+do
+	local patchedModules = {}
+
+	local function patchTitanModule(moduleScript, titanName)
+		local titanModule = safeRequire(moduleScript)
+		if not titanModule then
+			return
+		end
+
+		if patchedModules[titanName] then
+			return
+		end
+		patchedModules[titanName] = true
+
+		local oldRegister = titanModule.Register
+		if type(oldRegister) ~= "function" then
+			return
+		end
+
+		titanModule.Register = function(self, ...)
+			if self and self.UtilityHandler then
+				local original = self.UtilityHandler.__OriginalCorrectNapeSize or self.UtilityHandler.CorrectNapeSize
+				if typeof(original) == "Vector3" then
+					self.UtilityHandler.__OriginalCorrectNapeSize = original
+
+					local multiplier = SETTINGS.NapeEnabled and (SETTINGS.NapeMultipliers[titanName] or 1) or 1
+					self.UtilityHandler.CorrectNapeSize = original * multiplier
+				end
+			end
+
+			return oldRegister(self, ...)
+		end
+	end
+
+	for titanName, _ in pairs(SETTINGS.NapeMultipliers) do
+		local moduleScript = titanTypesFolder:FindFirstChild(titanName)
+		if moduleScript and moduleScript:IsA("ModuleScript") then
+			patchTitanModule(moduleScript, titanName)
+		end
+	end
+end
+
+--// Gear patch
+do
+	local ODMG = safeRequire(odmgFolder)
+	local Grapples = safeRequire(odmgFolder:WaitForChild("Grapples"))
+
+	if ODMG and Grapples then
+		local oldGetRange = Grapples.GetRange
+		local oldMaxVelocity = Grapples.MaxVelocity
+		local oldGetVeloMultiplier = Grapples.GetVeloMultiplier
+		local oldGiveVelocity = Grapples.GiveVelocity
+		local oldNew = Grapples.new
+		local oldReduceGasCount = ODMG.ReduceGasCount
+		local grappleObjects = setmetatable({}, { __mode = "k" })
+
+		local function forceODMGBuffs(odmg)
+			if not SETTINGS.GearEnabled or not odmg then
+				return
+			end
+
+			if odmg:GetAttribute("Gas") ~= SETTINGS.Gear.GAS_AMOUNT then
+				odmg:SetAttribute("Gas", SETTINGS.Gear.GAS_AMOUNT)
+			end
+
+			if odmg:GetAttribute("MaxGas") ~= SETTINGS.Gear.MAX_GAS then
+				odmg:SetAttribute("MaxGas", SETTINGS.Gear.MAX_GAS)
+			end
+		end
+
+		local function forceGrappleNoFloorDrain(grapple)
+			if not SETTINGS.GearEnabled or not grapple then
+				return
+			end
+
+			grapple.GroundHookTension = 0
+			grapple.GroundHookEnabled = true
+			grapple.dep50Sent = false
+			grapple.dep75Sent = false
+			grapple.rec50Sent = false
+			grapple.rec25Sent = false
+			grapple.lastBlacklisted = false
+			grapple.lastRayOk = true
+
+			if grapple.Left then
+				grapple.Left.PlayerHooking = grapple.Left.PlayerHooking or false
+			end
+
+			if grapple.Right then
+				grapple.Right.PlayerHooking = grapple.Right.PlayerHooking or false
+			end
+		end
+
+		Grapples.GetRange = function(self)
+			if not SETTINGS.GearEnabled then
+				return oldGetRange and oldGetRange(self) or SETTINGS.Gear.RANGE
+			end
+
+			local base = SETTINGS.Gear.RANGE
+
+			if oldGetRange then
+				local ok, result = pcall(oldGetRange, self)
+				if ok and typeof(result) == "number" then
+					base = math.max(result, SETTINGS.Gear.RANGE)
+				end
+			end
+
+			return base
+		end
+
+		Grapples.MaxVelocity = function(self, dexterityLevel)
+			if not SETTINGS.GearEnabled then
+				return oldMaxVelocity and oldMaxVelocity(self, dexterityLevel) or SETTINGS.Gear.MAX_VELOCITY
+			end
+
+			local base = SETTINGS.Gear.MAX_VELOCITY
+
+			if oldMaxVelocity then
+				local ok, result = pcall(oldMaxVelocity, self, dexterityLevel)
+				if ok and typeof(result) == "number" then
+					base = math.max(result, SETTINGS.Gear.MAX_VELOCITY)
+				end
+			end
+
+			return base
+		end
+
+		Grapples.GetVeloMultiplier = function(self)
+			if not SETTINGS.GearEnabled then
+				return oldGetVeloMultiplier and oldGetVeloMultiplier(self) or 1
+			end
+
+			local base = 1 + SETTINGS.Gear.VELO_ADD + (SETTINGS.Gear.EXTRA_SPEED_VALUE / 100)
+
+			if oldGetVeloMultiplier then
+				local ok, result = pcall(oldGetVeloMultiplier, self)
+				if ok and typeof(result) == "number" then
+					base = result + SETTINGS.Gear.VELO_ADD + (SETTINGS.Gear.EXTRA_SPEED_VALUE / 100)
+				end
+			end
+
+			return base
+		end
+
+		Grapples.GiveVelocity = function(self, amount, useMultiplier, decayInfo, maxClamp)
+			if not SETTINGS.GearEnabled then
+				if oldGiveVelocity then
+					return oldGiveVelocity(self, amount, useMultiplier, decayInfo, maxClamp)
+				end
+				return self.BuiltVelocity
+			end
+
+			local dexterityLevel = 0
+			local okDex, dexResult = pcall(function()
+				return self:Client():GetAttribute("Att_Dexterity") - 1
+			end)
+
+			if okDex and typeof(dexResult) == "number" then
+				dexterityLevel = dexResult
+			end
+
+			local maxVelo = SETTINGS.Gear.MAX_VELOCITY
+			local okMax, maxResult = pcall(function()
+				return self:MaxVelocity(dexterityLevel)
+			end)
+
+			if okMax and typeof(maxResult) == "number" then
+				maxVelo = maxResult
+			end
+
+			local forcedBurst = maxVelo * SETTINGS.Gear.HOOK_VELO_FRACTION
+
+			if maxClamp and typeof(maxClamp) == "number" then
+				forcedBurst = math.min(forcedBurst, maxClamp)
+			end
+
+			if amount and amount < 0 then
+				if oldGiveVelocity then
+					return oldGiveVelocity(self, amount, useMultiplier, decayInfo, maxClamp)
+				end
+				self.BuiltVelocity = math.max((self.BuiltVelocity or 0) + amount, 0)
+				return self.BuiltVelocity
+			end
+
+			self.BuiltVelocity = math.clamp(forcedBurst, 0, maxVelo)
+			return self.BuiltVelocity
+		end
+
+		if oldNew then
+			Grapples.new = function(...)
+				local obj = oldNew(...)
+
+				if obj then
+					grappleObjects[obj] = true
+					forceGrappleNoFloorDrain(obj)
+				end
+
+				if obj and not obj.__PatchedStats then
+					obj.__PatchedStats = true
+
+					local oldVariant = obj.GetVariantMultiplier
+					if oldVariant then
+						obj.GetVariantMultiplier = function(self, ...)
+							local result = oldVariant(self, ...)
+
+							if type(result) == "table" then
+								local copy = {}
+								for k, v in pairs(result) do
+									copy[k] = v
+								end
+
+								if SETTINGS.GearEnabled then
+									copy.HookSpeed = math.max(copy.HookSpeed or 0, SETTINGS.Gear.HOOK_SPEED)
+								end
+
+								return copy
+							end
+
+							return result
+						end
+					end
+				end
+
+				return obj
+			end
+		end
+
+		if oldReduceGasCount then
+			ODMG.ReduceGasCount = function(self, ...)
+				if not SETTINGS.GearEnabled then
+					return oldReduceGasCount(self, ...)
+				end
+
+				local model = nil
+				local ok, result = pcall(function()
+					return self:GetModel()
+				end)
+
+				if ok then
+					model = result
+				end
+
+				if model then
+					forceODMGBuffs(model)
+				end
+
+				return false
+			end
+		end
+
+		local function applyODMGBuffs()
+			if not SETTINGS.GearEnabled then
+				return
+			end
+
+			local character = player.Character
+			if not character then
+				return
+			end
+
+			local odmg = character:FindFirstChild("ODMG")
+			if odmg then
+				forceODMGBuffs(odmg)
+			end
+		end
+
+		local function watchCharacter(character)
+			applyODMGBuffs()
+
+			character.ChildAdded:Connect(function(child)
+				if child.Name == "ODMG" then
+					task.wait()
+					forceODMGBuffs(child)
+				end
+			end)
+		end
+
+		if player.Character then
+			watchCharacter(player.Character)
+		end
+
+		player.CharacterAdded:Connect(function(character)
+			watchCharacter(character)
+		end)
+
+		RunService.Heartbeat:Connect(function()
+			if not SETTINGS.GearEnabled then
+				return
+			end
+
+			for grapple in pairs(grappleObjects) do
+				forceGrappleNoFloorDrain(grapple)
+			end
+
+			local ok, active = pcall(function()
+				return ODMG:GetActive()
+			end)
+
+			if ok and active then
+				local ok2, grapple = pcall(function()
+					return active:Grapples()
+				end)
+
+				if ok2 and grapple then
+					grappleObjects[grapple] = true
+					forceGrappleNoFloorDrain(grapple)
+				end
+			end
+		end)
+
+		task.spawn(function()
+			while true do
+				if SETTINGS.GearEnabled then
+					local character = player.Character
+					if character then
+						local odmg = character:FindFirstChild("ODMG")
+						if odmg then
+							forceODMGBuffs(odmg)
+						end
+					end
+				end
+				task.wait(4)
+			end
+		end)
+	end
+end
+
+--// Titan ESP
+local titanEspByNape = {}
+
+local function removeTitanESPByNape(nape)
+	local info = titanEspByNape[nape]
+	if not info then
+		return
+	end
+	if info.box then info.box:Destroy() end
+	if info.bb then info.bb:Destroy() end
+	titanEspByNape[nape] = nil
+end
+
+local function makeTitanSelectionBox(part)
+	local box = Instance.new("SelectionBox")
+	box.Name = "_TitanESP_Box"
+	box.Adornee = part
+	box.LineThickness = 0.05
+	box.Color3 = Color3.fromRGB(0, 170, 255)
+	box.SurfaceColor3 = Color3.fromRGB(0, 170, 255)
+	box.Transparency = SETTINGS.TitanESPTransparency
+	box.SurfaceTransparency = SETTINGS.TitanESPTransparency
+	box.Parent = part
+	return box
+end
+
+local function makeTitanBillboard(part)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "_TitanESP_Billboard"
+	bb.Adornee = part
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(250, 36)
+	bb.StudsOffset = Vector3.new(0, 3.1, 0)
+	bb.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.35
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Text = ""
+	label.Parent = bb
+
+	return bb, label
+end
+
+local function attachTitanESP(model)
+	if not SETTINGS.TitanESPEnabled or not model or not model:IsA("Model") then
+		return
+	end
+
+	local nape = findNape(model)
+	if not nape or titanEspByNape[nape] then
+		return
+	end
+
+	local box = makeTitanSelectionBox(nape)
+	local bb, label = makeTitanBillboard(nape)
+
+	titanEspByNape[nape] = {
+		box = box,
+		bb = bb,
+		label = label,
+		model = model,
+		nape = nape,
+	}
+
+	nape.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			removeTitanESPByNape(nape)
+		end
+	end)
+end
+
+local function refreshTitanESP()
+	for nape in pairs(titanEspByNape) do
+		removeTitanESPByNape(nape)
+	end
+
+	if SETTINGS.TitanESPEnabled and titanEspFolder then
+		for _, titan in ipairs(titanEspFolder:GetChildren()) do
+			attachTitanESP(titan)
+		end
+	end
+end
+
+if titanEspFolder and titanEspFolder:IsA("Instance") then
+	titanEspFolder.ChildAdded:Connect(function(titan)
+		task.wait(0.1)
+		attachTitanESP(titan)
+	end)
+
+	titanEspFolder.ChildRemoved:Connect(function(titan)
+		local nape = findNape(titan)
+		if nape then
+			removeTitanESPByNape(nape)
+		end
+	end)
+end
+
+--// Character ESP
+local characterEspByModel = {}
+
+local function removeCharacterESP(model)
+	local info = characterEspByModel[model]
+	if not info then
+		return
+	end
+	if info.box then info.box:Destroy() end
+	if info.bb then info.bb:Destroy() end
+	characterEspByModel[model] = nil
+end
+
+local function getCharacterESPInfo(model)
+	if not model or not model:IsA("Model") then
+		return nil, nil
+	end
+
+	local humanoid = model:FindFirstChildWhichIsA("Humanoid")
+	local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+	if not humanoid or not root then
+		return nil, nil
+	end
+
+	return humanoid, root
+end
+
+local function makeCharacterSelectionBox(part)
+	local box = Instance.new("SelectionBox")
+	box.Name = "_CharacterESP_Box"
+	box.Adornee = part
+	box.LineThickness = 0.05
+	box.Color3 = Color3.fromRGB(0, 170, 255)
+	box.SurfaceColor3 = Color3.fromRGB(0, 170, 255)
+	box.Transparency = SETTINGS.CharacterESPTransparency
+	box.SurfaceTransparency = SETTINGS.CharacterESPTransparency
+	box.Parent = part
+	return box
+end
+
+local function makeCharacterBillboard(part)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "_CharacterESP_Billboard"
+	bb.Adornee = part
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(260, 54)
+	bb.StudsOffset = Vector3.new(0, 3.4, 0)
+	bb.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.35
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Text = ""
+	label.Parent = bb
+
+	return bb, label
+end
+
+local function attachCharacterESP(model)
+	if not SETTINGS.CharacterESPEnabled or not charactersFolder then
+		return
+	end
+	if not model or not model:IsA("Model") then
+		return
+	end
+	if characterEspByModel[model] then
+		return
+	end
+
+	local humanoid, root = getCharacterESPInfo(model)
+	if not humanoid or not root then
+		return
+	end
+
+	local box = makeCharacterSelectionBox(root)
+	local bb, label = makeCharacterBillboard(root)
+
+	characterEspByModel[model] = {
+		box = box,
+		bb = bb,
+		label = label,
+		model = model,
+		root = root,
+		humanoid = humanoid,
+	}
+
+	model.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			removeCharacterESP(model)
+		end
+	end)
+end
+
+local function refreshCharacterESP()
+	for model in pairs(characterEspByModel) do
+		removeCharacterESP(model)
+	end
+
+	if SETTINGS.CharacterESPEnabled and charactersFolder then
+		for _, model in ipairs(charactersFolder:GetChildren()) do
+			attachCharacterESP(model)
+		end
+	end
+end
+
+if charactersFolder then
+	charactersFolder.ChildAdded:Connect(function(model)
+		task.wait(0.15)
+		attachCharacterESP(model)
+	end)
+
+	charactersFolder.ChildRemoved:Connect(function(model)
+		removeCharacterESP(model)
+	end)
+end
+
+--// Refill ESP
+local refillEspByModel = {}
+
+local function removeRefillESP(model)
+	local info = refillEspByModel[model]
+	if not info then
+		return
+	end
+	if info.box then info.box:Destroy() end
+	if info.bb then info.bb:Destroy() end
+	refillEspByModel[model] = nil
+end
+
+local function getPlacementRoot(model)
+	if not model or not model:IsA("Model") then
+		return nil
+	end
+
+	return model.PrimaryPart
+		or model:FindFirstChild("HumanoidRootPart")
+		or model:FindFirstChild("Torso")
+		or model:FindFirstChild("UpperTorso")
+		or model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function makeRefillSelectionBox(part)
+	local box = Instance.new("SelectionBox")
+	box.Name = "_RefillESP_Box"
+	box.Adornee = part
+	box.LineThickness = 0.05
+	box.Color3 = Color3.fromRGB(0, 255, 120)
+	box.SurfaceColor3 = Color3.fromRGB(0, 255, 120)
+	box.Transparency = SETTINGS.RefillESPTransparency
+	box.SurfaceTransparency = SETTINGS.RefillESPTransparency
+	box.Parent = part
+	return box
+end
+
+local function makeRefillBillboard(part)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "_RefillESP_Billboard"
+	bb.Adornee = part
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(250, 36)
+	bb.StudsOffset = Vector3.new(0, 3.1, 0)
+	bb.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.35
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Text = ""
+	label.Parent = bb
+
+	return bb, label
+end
+
+local function attachRefillESP(model)
+	if not SETTINGS.RefillESPEnabled or not placementsFolder then
+		return
+	end
+	if not model or not model:IsA("Model") then
+		return
+	end
+	if refillEspByModel[model] then
+		return
+	end
+
+	local root = getPlacementRoot(model)
+	if not root then
+		return
+	end
+
+	local box = makeRefillSelectionBox(root)
+	local bb, label = makeRefillBillboard(root)
+
+	refillEspByModel[model] = {
+		box = box,
+		bb = bb,
+		label = label,
+		model = model,
+		root = root,
+	}
+
+	model.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			removeRefillESP(model)
+		end
+	end)
+end
+
+local function refreshRefillESP()
+	for model in pairs(refillEspByModel) do
+		removeRefillESP(model)
+	end
+
+	if SETTINGS.RefillESPEnabled and placementsFolder then
+		for _, model in ipairs(placementsFolder:GetChildren()) do
+			attachRefillESP(model)
+		end
+	end
+end
+
+if placementsFolder then
+	placementsFolder.ChildAdded:Connect(function(model)
+		task.wait(0.15)
+		attachRefillESP(model)
+	end)
+
+	placementsFolder.ChildRemoved:Connect(function(model)
+		removeRefillESP(model)
+	end)
+end
+
+--// Shifter handling
+local shifterOriginals = setmetatable({}, { __mode = "k" })
+local shifterEspByModel = {}
+
+local function rememberShifterOriginal(part)
+	if not part then
+		return
+	end
+
+	if not shifterOriginals[part] then
+		shifterOriginals[part] = {
+			Size = part.Size,
+			CanCollide = part.CanCollide,
+		}
+	end
+end
+
+local function restoreShifterPart(part)
+	local original = shifterOriginals[part]
+	if not part or not part.Parent or not original then
+		return
+	end
+
+	part.Size = original.Size
+	part.CanCollide = original.CanCollide
+end
+
+local function applyShifterExpansionToModel(model)
+	if not isShifterModel(model) then
+		return
+	end
+
+	local nape = findNape(model)
+	local eyes = findEyes(model)
+
+	if nape then
+		rememberShifterOriginal(nape)
+
+		if SETTINGS.ShifterNapeEnabled then
+			local original = shifterOriginals[nape]
+			if original then
+				nape.Size = original.Size * SETTINGS.ShifterNapeMultiplier
+				nape.CanCollide = false
+			end
+		else
+			restoreShifterPart(nape)
+		end
+	end
+
+	for _, eye in ipairs(eyes) do
+		rememberShifterOriginal(eye)
+
+		if SETTINGS.ShifterEyesEnabled then
+			local original = shifterOriginals[eye]
+			if original then
+				eye.Size = original.Size * SETTINGS.ShifterEyesMultiplier
+				eye.CanCollide = false
+			end
+		else
+			restoreShifterPart(eye)
+		end
+	end
+end
+
+local function refreshShifterExpansion()
+	if not charactersFolder then
+		return
+	end
+
+	for _, model in ipairs(charactersFolder:GetChildren()) do
+		if model:IsA("Model") then
+			applyShifterExpansionToModel(model)
+		end
+	end
+end
+
+local function removeShifterESP(model)
+	local info = shifterEspByModel[model]
+	if not info then
+		return
+	end
+	if info.billboard then
+		info.billboard:Destroy()
+	end
+	shifterEspByModel[model] = nil
+end
+
+local function attachShifterESP(model)
+	if not SETTINGS.ShifterESPEnabled then
+		return
+	end
+	if not isShifterModel(model) then
+		return
+	end
+	if shifterEspByModel[model] then
+		return
+	end
+
+	local adornee = getShifterAdornee(model)
+	if not adornee then
+		return
+	end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "_ShifterESP"
+	bb.Adornee = adornee
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(210, 50)
+	bb.StudsOffset = Vector3.new(0, 4.4, 0)
+	bb.Parent = adornee
+
+	local glowBack = Instance.new("Frame")
+	glowBack.BackgroundColor3 = COLORS.SHIFTER_RED
+	glowBack.BackgroundTransparency = 0.25
+	glowBack.Size = UDim2.new(1, 0, 1, 0)
+	glowBack.BorderSizePixel = 0
+	glowBack.Parent = bb
+	addCorner(glowBack, 10)
+
+	local glowStroke = Instance.new("UIStroke")
+	glowStroke.Color = COLORS.SHIFTER_RED
+	glowStroke.Thickness = 2
+	glowStroke.Transparency = 0
+	glowStroke.Parent = glowBack
+
+	local glow = Instance.new("UIGradient")
+	glow.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, COLORS.SHIFTER_RED_SOFT),
+		ColorSequenceKeypoint.new(1, COLORS.SHIFTER_RED),
+	})
+	glow.Rotation = 90
+	glow.Parent = glowBack
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Text = "SHIFTER"
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeColor3 = COLORS.SHIFTER_RED
+	label.TextStrokeTransparency = 0
+	label.Font = Enum.Font.GothamBlack
+	label.TextSize = 22
+	label.Parent = bb
+
+	local labelStroke = Instance.new("UIStroke")
+	labelStroke.Color = COLORS.SHIFTER_RED
+	labelStroke.Thickness = 1.75
+	labelStroke.Transparency = 0
+	labelStroke.Parent = label
+
+	shifterEspByModel[model] = {
+		billboard = bb,
+		adornee = adornee,
+	}
+
+	model.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			removeShifterESP(model)
+		end
+	end)
+end
+
+local function refreshShifterESP()
+	for model in pairs(shifterEspByModel) do
+		removeShifterESP(model)
+	end
+
+	if not SETTINGS.ShifterESPEnabled or not charactersFolder then
+		return
+	end
+
+	for _, model in ipairs(charactersFolder:GetChildren()) do
+		attachShifterESP(model)
+	end
+end
+
+if charactersFolder then
+	charactersFolder.ChildAdded:Connect(function(model)
+		task.wait(0.15)
+		if model:IsA("Model") then
+			applyShifterExpansionToModel(model)
+			attachShifterESP(model)
+		end
+	end)
+
+	charactersFolder.ChildRemoved:Connect(function(model)
+		removeShifterESP(model)
+	end)
+end
+
+RunService.RenderStepped:Connect(function()
+	local localRoot = getLocalRoot()
+	if localRoot then
+		for nape, info in pairs(titanEspByNape) do
+			if not nape or not nape.Parent or not info.label then
+				removeTitanESPByNape(nape)
+			else
+				if info.box then
+					info.box.Transparency = SETTINGS.TitanESPTransparency
+					info.box.SurfaceTransparency = SETTINGS.TitanESPTransparency
+				end
+				local dist = (localRoot.Position - nape.Position).Magnitude
+				info.label.Text = string.format("%s | %.1f studs", info.model.Name, dist)
+			end
+		end
+
+		for model, info in pairs(characterEspByModel) do
+			local humanoid = info.humanoid
+			local root = info.root
+
+			if not model or not model.Parent or not root or not root.Parent or not humanoid or not humanoid.Parent or not info.label then
+				removeCharacterESP(model)
+			else
+				if info.box then
+					info.box.Transparency = SETTINGS.CharacterESPTransparency
+					info.box.SurfaceTransparency = SETTINGS.CharacterESPTransparency
+				end
+
+				local dist = (localRoot.Position - root.Position).Magnitude
+				info.label.Text = string.format(
+					"%s\nDistance: %.1f\nHealth: %d/%d",
+					model.Name,
+					dist,
+					math.floor(humanoid.Health),
+					math.floor(humanoid.MaxHealth)
+				)
+			end
+		end
+
+		for model, info in pairs(refillEspByModel) do
+			local root = getPlacementRoot(model)
+
+			if not model or not model.Parent or not root or not root.Parent or not info.label then
+				removeRefillESP(model)
+			else
+				info.root = root
+				if info.bb then
+					info.bb.Adornee = root
+				end
+				if info.box then
+					info.box.Adornee = root
+					info.box.Transparency = SETTINGS.RefillESPTransparency
+					info.box.SurfaceTransparency = SETTINGS.RefillESPTransparency
+				end
+
+				local dist = (localRoot.Position - root.Position).Magnitude
+				info.label.Text = string.format("%s | %.1f studs", model.Name, dist)
+			end
+		end
+	end
+end)
+
+--// UI
+local gui = mk("ScreenGui", {
+	Name = "CheddarCheeseHub | Eternity",
+	Parent = playerGui,
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+local main = mk("Frame", {
+	Parent = gui,
+	Size = UDim2.new(0, 930, 0, 600),
+	Position = UDim2.new(0.5, -465, 0.5, -300),
+	BackgroundColor3 = COLORS.BG,
+	BorderSizePixel = 0,
+})
+addCorner(main, 18)
+addStroke(main, COLORS.STROKE, 1.4, 0.08)
+
+local glow = mk("ImageLabel", {
+	Parent = main,
+	BackgroundTransparency = 1,
+	Image = "rbxassetid://5028857084",
+	ImageColor3 = COLORS.ACCENT,
+	ImageTransparency = 0.72,
+	Size = UDim2.new(1, 120, 1, 120),
+	Position = UDim2.new(0.5, -main.AbsoluteSize.X / 2 - 60, 0.5, -main.AbsoluteSize.Y / 2 - 60),
+	ZIndex = 0,
+})
+glow.AnchorPoint = Vector2.new(0.5, 0.5)
+glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+
+local topBar = mk("Frame", {
+	Parent = main,
+	Size = UDim2.new(1, 0, 0, 56),
+	BackgroundColor3 = COLORS.TOP,
+	BorderSizePixel = 0,
+})
+addCorner(topBar, 18)
+addStroke(topBar, COLORS.STROKE_SOFT, 1, 0.18)
+mk("Frame", {
+	Parent = topBar,
+	Position = UDim2.new(0, 0, 1, -18),
+	Size = UDim2.new(1, 0, 0, 18),
+	BackgroundColor3 = COLORS.TOP,
+	BorderSizePixel = 0,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 6),
+	Size = UDim2.new(1, -40, 0, 22),
+	Text = "CheddarCheese | Eternity",
+	TextColor3 = COLORS.TEXT,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.GothamBold,
+	TextSize = 20,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 28),
+	Size = UDim2.new(1, -40, 0, 16),
+	Text = "Best Cheating Hub for AOT CC",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+})
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Parent = topBar
+closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+closeBtn.Size = UDim2.new(0, 28, 0, 24)
+closeBtn.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 16
+closeBtn.AutoButtonColor = false
+
+local corner = Instance.new("UICorner", closeBtn)
+corner.CornerRadius = UDim.new(0, 8)
+
+local stroke = Instance.new("UIStroke", closeBtn)
+stroke.Color = Color3.fromRGB(35, 122, 200)
+stroke.Thickness = 1
+stroke.Transparency = 0.2
+
+local sideBar = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 0, 0, 56),
+	Size = UDim2.new(0, 190, 1, -56),
+	BackgroundColor3 = COLORS.SIDE,
+	BorderSizePixel = 0,
+})
+addCorner(sideBar, 18)
+addStroke(sideBar, COLORS.STROKE_SOFT, 1, 0.2)
+mk("Frame", {
+	Parent = sideBar,
+	Position = UDim2.new(1, -18, 0, 0),
+	Size = UDim2.new(0, 18, 1, 0),
+	BackgroundColor3 = COLORS.SIDE,
+	BorderSizePixel = 0,
+})
+
+local contentHolder = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 190, 0, 56),
+	Size = UDim2.new(1, -190, 1, -56),
+	BackgroundTransparency = 1,
+})
+
+local pages = {}
+local tabButtons = {}
+local uiOpen = true
+
+local function createPage(name)
+	local page = mk("ScrollingFrame", {
+		Parent = contentHolder,
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		CanvasSize = UDim2.new(0, 0, 0, 1400),
+		Visible = false,
+	})
+	pages[name] = page
+	return page
+end
+
+local function switchPage(name)
+	uiState.currentPage = name
+	for pageName, page in pairs(pages) do
+		page.Visible = (pageName == name)
+	end
+	for tabName, button in pairs(tabButtons) do
+		local active = (tabName == name)
+		button.BackgroundColor3 = active and COLORS.TAB_ACTIVE or COLORS.TAB
+		button.TextColor3 = active and COLORS.TEXT or COLORS.SUB
+	end
+end
+
+local function createTab(y, text, pageName)
+	local btn = mk("TextButton", {
+		Parent = sideBar,
+		Position = UDim2.new(0, 12, 0, y),
+		Size = UDim2.new(1, -24, 0, 40),
+		BackgroundColor3 = COLORS.TAB,
+		BorderSizePixel = 0,
+		Text = "   " .. text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+		AutoButtonColor = false,
+	})
+	addCorner(btn, 10)
+	addStroke(btn, COLORS.STROKE_SOFT, 1, 0.22)
+
+	btn.MouseButton1Click:Connect(function()
+		switchPage(pageName)
+	end)
+
+	tabButtons[pageName] = btn
+	return btn
+end
+
+local function createCard(parent, x, y, w, h, title)
+	local card = mk("Frame", {
+		Parent = parent,
+		Position = UDim2.new(0, x, 0, y),
+		Size = UDim2.new(0, w, 0, h),
+		BackgroundColor3 = COLORS.PANEL,
+		BorderSizePixel = 0,
+	})
+	addCorner(card, 16)
+	addStroke(card, COLORS.STROKE_SOFT, 1, 0.12)
+	addGradient(card, COLORS.PANEL, COLORS.PANEL2, 90)
+
+	mk("TextLabel", {
+		Parent = card,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 16, 0, 14),
+		Size = UDim2.new(1, -32, 0, 22),
+		Text = title,
+		TextColor3 = COLORS.TEXT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamBold,
+		TextSize = 16,
+	})
+
+	return card
+end
+
+local function createLabel(parent, y, text)
+	return mk("TextLabel", {
+		Parent = parent,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 16, 0, y),
+		Size = UDim2.new(1, -32, 0, 18),
+		Text = text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+	})
+end
+
+local function createToggle(parent, y, text, getter, setter)
+	createLabel(parent, y, text)
+
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -100, 0, y - 4),
+		Size = UDim2.new(0, 80, 0, 28),
+		BackgroundColor3 = getter() and COLORS.ON or COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = getter() and "ON" or "OFF",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE, 1, 0.2)
+
+	local function refresh()
+		button.Text = getter() and "ON" or "OFF"
+		TweenService:Create(button, TweenInfo.new(0.15), {
+			BackgroundColor3 = getter() and COLORS.ON or COLORS.OFF
+		}):Play()
+	end
+
+	button.MouseButton1Click:Connect(function()
+		setter(not getter())
+		refresh()
+	end)
+
+	refresh()
+	return button, refresh
+end
+
+local function createBox(parent, y, text, defaultValue, applyFn)
+	createLabel(parent, y, text)
+
+	local box = mk("TextBox", {
+		Parent = parent,
+		Position = UDim2.new(0, 16, 0, y + 22),
+		Size = UDim2.new(1, -128, 0, 32),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = tostring(defaultValue),
+		TextColor3 = COLORS.TEXT,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+	})
+	addCorner(box, 10)
+	addStroke(box, COLORS.STROKE_SOFT, 1, 0.1)
+
+	local btn = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -96, 0, y + 22),
+		Size = UDim2.new(0, 80, 0, 32),
+		BackgroundColor3 = COLORS.ACCENT,
+		BorderSizePixel = 0,
+		Text = "APPLY",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(btn, 10)
+	addStroke(btn, COLORS.STROKE, 1, 0.14)
+
+	btn.MouseButton1Click:Connect(function()
+		applyFn(box.Text)
+	end)
+
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			applyFn(box.Text)
+		end
+	end)
+
+	return box, btn
+end
+
+local function createKeybindRow(parent, y, labelText, getter, setter)
+	createLabel(parent, y, labelText)
+
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -156, 0, y - 4),
+		Size = UDim2.new(0, 136, 0, 28),
+		BackgroundColor3 = COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = keyName(getter()),
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE, 1, 0.2)
+
+	local function refresh()
+		if uiState.capturingKeybind == button then
+			button.Text = "PRESS A KEY..."
+			button.BackgroundColor3 = COLORS.ON
+		else
+			button.Text = keyName(getter())
+			button.BackgroundColor3 = COLORS.OFF
+		end
+	end
+
+	button.MouseButton1Click:Connect(function()
+		uiState.capturingKeybind = button
+		button._setter = setter
+		refresh()
+	end)
+
+	refresh()
+	return button, refresh
+end
+
+-- Pages
+local pageNape = createPage("Nape")
+local pageGear = createPage("Gear")
+local pageVisuals = createPage("Visuals")
+local pageShifter = createPage("Shifter")
+local pageAntiGrab = createPage("AntiGrab")
+
+pageVisuals.CanvasSize = UDim2.new(0, 0, 0, 900)
+pageShifter.CanvasSize = UDim2.new(0, 0, 0, 1100)
+
+createTab(16, "Nape Expander", "Nape")
+createTab(60, "Gear", "Gear")
+createTab(104, "Visuals", "Visuals")
+createTab(148, "Shifter", "Shifter")
+createTab(192, "Anti Grab", "AntiGrab")
+
+-- Nape page
+local napeMain = createCard(pageNape, 16, 16, 680, 1160, "Nape Expander")
+local _, refreshNapeToggle = createToggle(
+	napeMain,
+	52,
+	"Enable overall nape expander",
+	function() return SETTINGS.NapeEnabled end,
+	function(v) SETTINGS.NapeEnabled = v end
+)
+
+local yPos = 100
+local napeBoxes = {}
+for titanName, value in pairs(SETTINGS.NapeMultipliers) do
+	local currentTitan = titanName
+	local box
+	box = createBox(napeMain, yPos, currentTitan .. " multiplier", value, function(text)
+		local n = tonumber(text)
+		if n then
+			SETTINGS.NapeMultipliers[currentTitan] = math.max(1, n)
+			box.Text = tostring(SETTINGS.NapeMultipliers[currentTitan])
+		else
+			box.Text = tostring(SETTINGS.NapeMultipliers[currentTitan])
+		end
+	end)
+	napeBoxes[currentTitan] = box
+	yPos += 62
+end
+
+-- Gear page
+local gearCard = createCard(pageGear, 16, 16, 680, 820, "Gear")
+local _, refreshGearToggle = createToggle(
+	gearCard,
+	52,
+	"Enable gear modifications",
+	function() return SETTINGS.GearEnabled end,
+	function(v) SETTINGS.GearEnabled = v end
+)
+
+closeBtn.MouseButton1Click:Connect(function()
+	uiOpen = false
+	main.Visible = false
+end)
+
+local gearOrder = {
+	"RANGE",
+	"HOOK_SPEED",
+	"GAS_AMOUNT",
+	"MAX_GAS",
+	"MAX_VELOCITY",
+	"VELO_ADD",
+	"EXTRA_SPEED_VALUE",
+	"HOOK_VELO_FRACTION",
+}
+
+local gearLabels = {
+	RANGE = "Range",
+	HOOK_SPEED = "Hook Speed",
+	GAS_AMOUNT = "Gas Amount",
+	MAX_GAS = "Max Gas",
+	MAX_VELOCITY = "Max Velocity",
+	VELO_ADD = "Velo Add",
+	EXTRA_SPEED_VALUE = "Extra Speed Value",
+	HOOK_VELO_FRACTION = "Hook Velo Fraction",
+}
+
+local gearY = 100
+local gearBoxes = {}
+
+for _, key in ipairs(gearOrder) do
+	local currentKey = key
+	local box
+	box = createBox(gearCard, gearY, gearLabels[currentKey], SETTINGS.Gear[currentKey], function(text)
+		local n = tonumber(text)
+		if n then
+			if currentKey == "HOOK_VELO_FRACTION" then
+				SETTINGS.Gear[currentKey] = math.clamp(n, 0, 5)
+			else
+				SETTINGS.Gear[currentKey] = n
+			end
+			box.Text = tostring(SETTINGS.Gear[currentKey])
+		else
+			box.Text = tostring(SETTINGS.Gear[currentKey])
+		end
+	end)
+	gearBoxes[currentKey] = box
+	gearY += 62
+end
+
+-- Visuals page
+local titanEspCard = createCard(pageVisuals, 16, 16, 680, 250, "Titan ESP")
+local _, refreshTitanEspToggle = createToggle(
+	titanEspCard,
+	52,
+	"Enable Titan ESP",
+	function() return SETTINGS.TitanESPEnabled end,
+	function(v)
+		SETTINGS.TitanESPEnabled = v
+		refreshTitanESP()
+	end
+)
+
+local titanEspTransparencyBox
+titanEspTransparencyBox = createBox(titanEspCard, 100, "Titan ESP Transparency (0-1)", SETTINGS.TitanESPTransparency, function(text)
+	SETTINGS.TitanESPTransparency = clamp01(text)
+	titanEspTransparencyBox.Text = tostring(SETTINGS.TitanESPTransparency)
+	refreshTitanESP()
+end)
+
+local _, refreshTitanKeybindButton = createKeybindRow(
+	titanEspCard,
+	160,
+	"Titan ESP Toggle Key",
+	function() return SETTINGS.TitanESPKeybind end,
+	function(keyCode) SETTINGS.TitanESPKeybind = keyCode end
+)
+
+local characterEspCard = createCard(pageVisuals, 16, 286, 680, 250, "Character ESP")
+local _, refreshCharacterEspToggle = createToggle(
+	characterEspCard,
+	52,
+	"Enable Character ESP",
+	function() return SETTINGS.CharacterESPEnabled end,
+	function(v)
+		SETTINGS.CharacterESPEnabled = v
+		refreshCharacterESP()
+	end
+)
+
+local characterEspTransparencyBox
+characterEspTransparencyBox = createBox(characterEspCard, 100, "Character ESP Transparency (0-1)", SETTINGS.CharacterESPTransparency, function(text)
+	SETTINGS.CharacterESPTransparency = clamp01(text)
+	characterEspTransparencyBox.Text = tostring(SETTINGS.CharacterESPTransparency)
+	refreshCharacterESP()
+end)
+
+local _, refreshCharacterKeybindButton = createKeybindRow(
+	characterEspCard,
+	160,
+	"Character ESP Toggle Key",
+	function() return SETTINGS.CharacterESPKeybind end,
+	function(keyCode) SETTINGS.CharacterESPKeybind = keyCode end
+)
+
+local refillEspCard = createCard(pageVisuals, 16, 556, 680, 250, "Refill ESP")
+local _, refreshRefillEspToggle = createToggle(
+	refillEspCard,
+	52,
+	"Enable Refill ESP",
+	function() return SETTINGS.RefillESPEnabled end,
+	function(v)
+		SETTINGS.RefillESPEnabled = v
+		refreshRefillESP()
+	end
+)
+
+local refillEspTransparencyBox
+refillEspTransparencyBox = createBox(refillEspCard, 100, "Refill ESP Transparency (0-1)", SETTINGS.RefillESPTransparency, function(text)
+	SETTINGS.RefillESPTransparency = clamp01(text)
+	refillEspTransparencyBox.Text = tostring(SETTINGS.RefillESPTransparency)
+	refreshRefillESP()
+end)
+
+local _, refreshRefillKeybindButton = createKeybindRow(
+	refillEspCard,
+	160,
+	"Refill ESP Toggle Key",
+	function() return SETTINGS.RefillESPKeybind end,
+	function(keyCode) SETTINGS.RefillESPKeybind = keyCode end
+)
+
+-- Shifter page
+local shifterCard = createCard(pageShifter, 16, 16, 680, 360, "Shifter")
+local _, refreshShifterNapeToggle = createToggle(
+	shifterCard,
+	52,
+	"Shifter Nape Expander",
+	function() return SETTINGS.ShifterNapeEnabled end,
+	function(v)
+		SETTINGS.ShifterNapeEnabled = v
+		refreshShifterExpansion()
+	end
+)
+
+local _, refreshShifterEyesToggle = createToggle(
+	shifterCard,
+	100,
+	"Shifter Eyes Expander",
+	function() return SETTINGS.ShifterEyesEnabled end,
+	function(v)
+		SETTINGS.ShifterEyesEnabled = v
+		refreshShifterExpansion()
+	end
+)
+
+local _, refreshShifterEspToggle = createToggle(
+	shifterCard,
+	148,
+	"Shifter ESP",
+	function() return SETTINGS.ShifterESPEnabled end,
+	function(v)
+		SETTINGS.ShifterESPEnabled = v
+		refreshShifterESP()
+	end
+)
+
+local shifterNapeMultBox
+shifterNapeMultBox = createBox(shifterCard, 208, "Shifter Nape Size Multiplier", SETTINGS.ShifterNapeMultiplier, function(text)
+	local n = tonumber(text)
+	if n then
+		SETTINGS.ShifterNapeMultiplier = math.max(1, n)
+	end
+	shifterNapeMultBox.Text = tostring(SETTINGS.ShifterNapeMultiplier)
+	refreshShifterExpansion()
+end)
+
+local shifterEyesMultBox
+shifterEyesMultBox = createBox(shifterCard, 270, "Shifter Eyes Size Multiplier", SETTINGS.ShifterEyesMultiplier, function(text)
+	local n = tonumber(text)
+	if n then
+		SETTINGS.ShifterEyesMultiplier = math.max(1, n)
+	end
+	shifterEyesMultBox.Text = tostring(SETTINGS.ShifterEyesMultiplier)
+	refreshShifterExpansion()
+end)
+
+local shifterVisualCard = createCard(pageShifter, 16, 396, 680, 420, "Shifter Visuals")
+
+local shifterVisualInfo = mk("TextLabel", {
+	Parent = shifterVisualCard,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 44),
+	Size = UDim2.new(1, -32, 0, 34),
+	TextWrapped = true,
+	Text = "Preview of the shifter hitbox boxes. Transparent red boxes show the current eyes and nape size multipliers.",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+})
+
+local visualPreview = mk("Frame", {
+	Parent = shifterVisualCard,
+	Position = UDim2.new(0, 18, 0, 94),
+	Size = UDim2.new(0, 320, 0, 280),
+	BackgroundColor3 = COLORS.INPUT,
+	BorderSizePixel = 0,
+})
+addCorner(visualPreview, 14)
+addStroke(visualPreview, COLORS.STROKE_SOFT, 1, 0.15)
+
+local previewHead = mk("Frame", {
+	Parent = visualPreview,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.42, 0),
+	Size = UDim2.new(0, 120, 0, 120),
+	BackgroundColor3 = Color3.fromRGB(65, 76, 95),
+	BorderSizePixel = 0,
+})
+addCorner(previewHead, 999)
+
+local previewFace = mk("Frame", {
+	Parent = previewHead,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.52, 0),
+	Size = UDim2.new(0, 86, 0, 86),
+	BackgroundTransparency = 1,
+})
+
+local leftEyePreview = mk("Frame", {
+	Parent = previewFace,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.34, 0, 0.38, 0),
+	Size = UDim2.new(0, 18, 0, 10),
+	BackgroundColor3 = COLORS.SHIFTER_RED,
+	BackgroundTransparency = 0.68,
+	BorderSizePixel = 0,
+})
+addCorner(leftEyePreview, 4)
+addStroke(leftEyePreview, COLORS.SHIFTER_RED, 1.5, 0)
+
+local rightEyePreview = mk("Frame", {
+	Parent = previewFace,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.66, 0, 0.38, 0),
+	Size = UDim2.new(0, 18, 0, 10),
+	BackgroundColor3 = COLORS.SHIFTER_RED,
+	BackgroundTransparency = 0.68,
+	BorderSizePixel = 0,
+})
+addCorner(rightEyePreview, 4)
+addStroke(rightEyePreview, COLORS.SHIFTER_RED, 1.5, 0)
+
+local neckBase = mk("Frame", {
+	Parent = visualPreview,
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0.62, 0),
+	Size = UDim2.new(0, 70, 0, 70),
+	BackgroundTransparency = 1,
+})
+
+local napePreview = mk("Frame", {
+	Parent = neckBase,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.52, 0),
+	Size = UDim2.new(0, 28, 0, 18),
+	BackgroundColor3 = COLORS.SHIFTER_RED,
+	BackgroundTransparency = 0.72,
+	BorderSizePixel = 0,
+})
+addCorner(napePreview, 4)
+addStroke(napePreview, COLORS.SHIFTER_RED, 1.5, 0)
+
+local shifterEspDemo = mk("Frame", {
+	Parent = shifterVisualCard,
+	Position = UDim2.new(0, 370, 0, 108),
+	Size = UDim2.new(0, 260, 0, 58),
+	BackgroundColor3 = COLORS.SHIFTER_RED,
+	BackgroundTransparency = 0.15,
+	BorderSizePixel = 0,
+})
+addCorner(shifterEspDemo, 12)
+addStroke(shifterEspDemo, COLORS.SHIFTER_RED, 2, 0)
+
+local shifterEspDemoGlow = Instance.new("UIGradient")
+shifterEspDemoGlow.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, COLORS.SHIFTER_RED_SOFT),
+	ColorSequenceKeypoint.new(1, COLORS.SHIFTER_RED),
+})
+shifterEspDemoGlow.Rotation = 90
+shifterEspDemoGlow.Parent = shifterEspDemo
+
+local shifterEspDemoText = mk("TextLabel", {
+	Parent = shifterEspDemo,
+	BackgroundTransparency = 1,
+	Size = UDim2.fromScale(1, 1),
+	Text = "SHIFTER",
+	TextColor3 = Color3.new(1, 1, 1),
+	TextStrokeColor3 = COLORS.SHIFTER_RED,
+	TextStrokeTransparency = 0,
+	Font = Enum.Font.GothamBlack,
+	TextSize = 28,
+})
+
+local shifterDataLabel = mk("TextLabel", {
+	Parent = shifterVisualCard,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 370, 0, 186),
+	Size = UDim2.new(0, 280, 0, 150),
+	Text = "",
+	TextColor3 = COLORS.TEXT,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 13,
+})
+
+local function getFirstShifterSample()
+	if not charactersFolder then
+		return nil, nil, nil
+	end
+
+	for _, model in ipairs(charactersFolder:GetChildren()) do
+		if isShifterModel(model) then
+			local nape = findNape(model)
+			local eyes = findEyes(model)
+			local firstEye = eyes[1]
+			return model, nape, firstEye
+		end
+	end
+
+	return nil, nil, nil
+end
+
+local function updateShifterPreview()
+	local eyeScale = math.clamp(SETTINGS.ShifterEyesMultiplier, 1, 8)
+	local napeScale = math.clamp(SETTINGS.ShifterNapeMultiplier, 1, 8)
+
+	leftEyePreview.Size = UDim2.new(0, 18 * eyeScale, 0, 10 * eyeScale)
+	rightEyePreview.Size = UDim2.new(0, 18 * eyeScale, 0, 10 * eyeScale)
+
+	napePreview.Size = UDim2.new(0, 28 * napeScale, 0, 18 * napeScale)
+
+	local model, nape, eye = getFirstShifterSample()
+	local text = {}
+
+	table.insert(text, "Live Sample:")
+	table.insert(text, "Shifter Found: " .. (model and model.Name or "None"))
+	table.insert(text, "")
+	table.insert(text, "Nape Multiplier: " .. tostring(SETTINGS.ShifterNapeMultiplier))
+	table.insert(text, "Eyes Multiplier: " .. tostring(SETTINGS.ShifterEyesMultiplier))
+	table.insert(text, "")
+
+	if nape then
+		table.insert(text, "Nape Size: " .. tostring(nape.Size))
+	else
+		table.insert(text, "Nape Size: N/A")
+	end
+
+	if eye then
+		table.insert(text, "Eye Size: " .. tostring(eye.Size))
+	else
+		table.insert(text, "Eye Size: N/A")
+	end
+
+	shifterDataLabel.Text = table.concat(text, "\n")
+end
+
+-- Anti grab placeholder page
+local antiGrabCard = createCard(pageAntiGrab, 16, 16, 680, 220, "Anti Grab")
+mk("TextLabel", {
+	Parent = antiGrabCard,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 60),
+	Size = UDim2.new(1, -32, 0, 80),
+	TextWrapped = true,
+	Text = "Anti grab page is intentionally left blank for now.\nThe code is not included yet because it has not been tested enough.",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Font = Enum.Font.Gotham,
+	TextSize = 14,
+})
+
+switchPage("Nape")
+refreshTitanESP()
+refreshCharacterESP()
+refreshRefillESP()
+refreshShifterExpansion()
+refreshShifterESP()
+updateShifterPreview()
+
+-- Dragging
+topBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		uiState.dragging = true
+		uiState.dragStart = input.Position
+		uiState.startPos = main.Position
+
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				uiState.dragging = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if uiState.dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - uiState.dragStart
+		main.Position = UDim2.new(
+			uiState.startPos.X.Scale,
+			uiState.startPos.X.Offset + delta.X,
+			uiState.startPos.Y.Scale,
+			uiState.startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- Keybind capture + ESP toggles
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+
+	if uiState.capturingKeybind then
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local setter = uiState.capturingKeybind._setter
+			if setter then
+				setter(input.KeyCode)
+			end
+			uiState.capturingKeybind = nil
+			refreshTitanKeybindButton()
+			refreshCharacterKeybindButton()
+			refreshRefillKeybindButton()
+		end
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		if input.KeyCode == SETTINGS.TitanESPKeybind then
+			SETTINGS.TitanESPEnabled = not SETTINGS.TitanESPEnabled
+			refreshTitanESP()
+			refreshTitanEspToggle()
+		elseif input.KeyCode == SETTINGS.CharacterESPKeybind then
+			SETTINGS.CharacterESPEnabled = not SETTINGS.CharacterESPEnabled
+			refreshCharacterESP()
+			refreshCharacterEspToggle()
+		elseif input.KeyCode == SETTINGS.RefillESPKeybind then
+			SETTINGS.RefillESPEnabled = not SETTINGS.RefillESPEnabled
+			refreshRefillESP()
+			refreshRefillEspToggle()
+		end
+	end
+end)
+
+-- Glow pulse
+task.spawn(function()
+	while gui.Parent do
+		TweenService:Create(glow, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+			ImageTransparency = 0.58
+		}):Play()
+		task.wait(1.6)
+		TweenService:Create(glow, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+			ImageTransparency = 0.74
+		}):Play()
+		task.wait(1.6)
+	end
+end)
+
+-- Keep shifter scan fresh
+task.spawn(function()
+	while gui.Parent do
+		refreshShifterExpansion()
+
+		if SETTINGS.ShifterESPEnabled then
+			for _, model in ipairs(charactersFolder and charactersFolder:GetChildren() or {}) do
+				attachShifterESP(model)
+			end
+		end
+
+		updateShifterPreview()
+		task.wait(0.35)
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	if input.KeyCode == Enum.KeyCode.LeftControl then
+		uiOpen = not uiOpen
+		main.Visible = uiOpen
+	end
+end)
