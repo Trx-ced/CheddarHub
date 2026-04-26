@@ -1,0 +1,1988 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local GUI_NAME = "CheddarCheeseHubSalvation"
+
+local oldGui = playerGui:FindFirstChild(GUI_NAME)
+if oldGui then
+	oldGui:Destroy()
+end
+
+for _, v in ipairs(workspace:GetDescendants()) do
+	if v:IsA("BillboardGui") and (v.Name == "TitanESP" or v.Name == "PlayerESP") then
+		v:Destroy()
+	end
+end
+
+local State = {
+	NapeEnabled = false,
+	NapeSize = 15,
+	NapeTransparency = 0.5,
+	AntiGrabEnabled = false,
+
+	GearEnabled = false,
+	GasEnabled = false,
+
+	Generation1Gas = 350,
+	Generation2Gas = 120,
+
+	GearBlades = 12,
+	GearDurability = 10000,
+	GearHookRange = 1000,
+	GearHookRangeIncrement = 1000,
+
+	GearVelocityCap = 250,
+	GearHardVelocityCap = 250,
+	GearVeloCapIncrement = 50,
+	GearHookVelocityGain = 20,
+	GearPassiveVelocityGain = 8,
+	GearVeloGainIncrement = 0.15,
+	GearOnBoostMomentumMultiplier = 1.5,
+	GearYankSpeedBoost = 1.1,
+	GearYankBoostDecayStart = 5,
+	GearYankBoostDecayRate = 1,
+	GearYankBoostFloor = 1,
+	GearBeingYankedPenalty = 0,
+	GearYankStrengthBonusPerPoint = 10,
+	GearVelocityBase = 25,
+	GearReelSpeed = 18,
+	GearBoostSpeed = 30,
+	GearBaseGasDuration = 27,
+	GearBoostDrainMultiplier = 0.35,
+	GearReelDrainMultiplier = 0.85,
+	GearGasDurationIncrement = 10,
+
+	GearMaxForceX = 85000,
+	GearMaxForceY = 85000,
+	GearMaxForceZ = 85000,
+
+	GearMaxTorqueX = 30000,
+	GearMaxTorqueY = 30000,
+	GearMaxTorqueZ = 30000,
+
+	StatModifierEnabled = true,
+
+	RallyBuffStrength = 0,
+	RallyBuffAcceleration = 0,
+	RallyBuffPreservation = 0.5,
+
+	LeadingChargeBuffStrength = 0,
+	LeadingChargeBuffAcceleration = 0,
+	LeadingChargeBuffPreservation = 0,
+
+	DontGiveUpBuffStrength = 3,
+	DontGiveUpBuffAcceleration = 1,
+	DontGiveUpBuffPreservation = 12,
+
+	FistsEnabled = true,
+	BladesEnabled = false,
+	SabreEnabled = true,
+
+	FistsDamage = 15,
+	FistsStun = 3,
+	FistsHitboxX = 12,
+	FistsHitboxY = 12,
+	FistsHitboxZ = 10,
+	FistsOffsetZ = -4,
+
+	BladesDamage = 20,
+	BladesStun = 0.6,
+	BladesHitboxX = 12,
+	BladesHitboxY = 12,
+	BladesHitboxZ = 12,
+	BladesOffsetZ = -2,
+
+	SabreDamage = 15,
+	SabreStun = 2,
+	SabreHitboxX = 12,
+	SabreHitboxY = 10,
+	SabreHitboxZ = 14,
+	SabreOffsetZ = -4,
+
+	TPMultiplierEnabled = true,
+	InjuryNullEnabled = true,
+
+	PlayerESPEnabled = true,
+	TitanESPEnabled = false,
+}
+
+local DefaultState = {}
+for k, v in pairs(State) do
+	DefaultState[k] = v
+end
+
+local SavedConfigs = {
+	Slot1 = nil,
+	Slot2 = nil,
+	Slot3 = nil,
+}
+
+local StoredParts = setmetatable({}, {__mode = "k"})
+local Pages = {}
+local TabButtons = {}
+
+local function cloneTable(tbl)
+	local copy = {}
+	for k, v in pairs(tbl) do
+		if type(v) == "table" then
+			copy[k] = cloneTable(v)
+		else
+			copy[k] = v
+		end
+	end
+	return copy
+end
+
+local function copyState(fromTbl)
+	for k in pairs(State) do
+		State[k] = fromTbl[k]
+	end
+end
+
+local function clamp(n, min, max)
+	if n < min then
+		return min
+	end
+	if n > max then
+		return max
+	end
+	return n
+end
+
+local function rememberPart(part)
+	if StoredParts[part] then
+		return StoredParts[part]
+	end
+
+	StoredParts[part] = {
+		Size = part.Size,
+		Transparency = part.Transparency,
+		Color = part.Color,
+		CanCollide = part.CanCollide,
+		CanTouch = part.CanTouch,
+		CanQuery = part.CanQuery,
+	}
+
+	return StoredParts[part]
+end
+
+local function restorePart(part)
+	local data = StoredParts[part]
+	if not data or not part or not part.Parent then
+		return
+	end
+
+	part.Size = data.Size
+	part.Transparency = data.Transparency
+	part.Color = data.Color
+	part.CanCollide = data.CanCollide
+	part.CanTouch = data.CanTouch
+	part.CanQuery = data.CanQuery
+end
+
+local function tryRequire(path)
+	local ok, result = pcall(require, path)
+	if ok then
+		return result
+	end
+	warn("Require failed:", result)
+	return nil
+end
+
+local GenerationsModule = nil
+local ODMG = nil
+local CombatLibrary = nil
+local TPModule = nil
+local TPAwardOriginal = nil
+
+do
+	local rsStorage = ReplicatedStorage:FindFirstChild("RSStorage")
+	if rsStorage then
+		local services = rsStorage:FindFirstChild("Services")
+		if services then
+			local modules = services:FindFirstChild("Modules")
+			local libraries = services:FindFirstChild("Libraries")
+
+			if modules then
+				local generations = modules:FindFirstChild("Generations")
+				if generations then
+					GenerationsModule = tryRequire(generations)
+					if GenerationsModule and GenerationsModule.Generations then
+						ODMG = GenerationsModule.Generations.ODMG
+					end
+				end
+
+				local talentPoints = modules:FindFirstChild("TalentPoints")
+				if talentPoints then
+					TPModule = tryRequire(talentPoints)
+					if TPModule and type(TPModule.AwardTP) == "function" then
+						TPAwardOriginal = TPModule.AwardTP
+					end
+				end
+			end
+
+			if libraries then
+				local combatScript = libraries:FindFirstChild("Combat")
+				if combatScript then
+					CombatLibrary = tryRequire(combatScript)
+				end
+			end
+		end
+	end
+end
+
+local GearOriginals = {
+	Generation1 = {},
+	Generation2 = {},
+	Stored = false,
+}
+
+local GearKeysToStore = {
+	"Gas",
+	"Blades",
+	"Durability",
+	"HardVelocityCap",
+	"VelocityCap",
+	"VeloCapIncrement",
+	"HookVelocityGain",
+	"PassiveVelocityGain",
+	"VeloGainIncrement",
+	"OnBoostMomentumMultiplier",
+	"YankSpeedBoost",
+	"YankBoostDecayStart",
+	"YankBoostDecayRate",
+	"YankBoostFloor",
+	"BeingYankedPenalty",
+	"YankStrengthBonusPerPoint",
+	"VelocityBase",
+	"ReelSpeed",
+	"BoostSpeed",
+	"BaseGasDuration",
+	"BoostDrainMultiplier",
+	"ReelDrainMultiplier",
+	"GasDurationIncrement",
+	"MaxForce",
+	"MaxTorque",
+	"HookRange",
+	"HookRangeIncrement",
+}
+
+local CombatOriginals = {
+	Stored = false,
+	Fists = {},
+	Blades = {},
+	Sabre = {},
+}
+
+local function ensureGearOriginals()
+	if not ODMG or GearOriginals.Stored then
+		return
+	end
+
+	GearOriginals.Stored = true
+
+	local g1 = ODMG["Generation 1"]
+	local g2 = ODMG["Generation 2"]
+
+	if g1 then
+		for _, key in ipairs(GearKeysToStore) do
+			GearOriginals.Generation1[key] = g1[key]
+		end
+	end
+
+	if g2 then
+		for _, key in ipairs(GearKeysToStore) do
+			GearOriginals.Generation2[key] = g2[key]
+		end
+	end
+end
+
+local function ensureCombatOriginals()
+	if not CombatLibrary or CombatOriginals.Stored then
+		return
+	end
+
+	local combatRoot = CombatLibrary.Combat or CombatLibrary
+	if type(combatRoot) ~= "table" then
+		return
+	end
+
+	CombatOriginals.Stored = true
+
+	if type(combatRoot.Fists) == "table" then
+		CombatOriginals.Fists.Damage = combatRoot.Fists.Damage
+		CombatOriginals.Fists.Stun = combatRoot.Fists.Stun
+		CombatOriginals.Fists.HitboxSize = combatRoot.Fists.HitboxSize
+		CombatOriginals.Fists.HitboxOffset = combatRoot.Fists.HitboxOffset
+	end
+
+	if type(combatRoot.Blades) == "table" then
+		CombatOriginals.Blades.Damage = combatRoot.Blades.Damage
+		CombatOriginals.Blades.Stun = combatRoot.Blades.Stun
+		CombatOriginals.Blades.HitboxSize = combatRoot.Blades.HitboxSize
+		CombatOriginals.Blades.HitboxOffset = combatRoot.Blades.HitboxOffset
+	end
+
+	if type(combatRoot.Sabre) == "table" then
+		CombatOriginals.Sabre.Damage = combatRoot.Sabre.Damage
+		CombatOriginals.Sabre.Stun = combatRoot.Sabre.Stun
+		CombatOriginals.Sabre.HitboxSize = combatRoot.Sabre.HitboxSize
+		CombatOriginals.Sabre.HitboxOffset = combatRoot.Sabre.HitboxOffset
+	end
+end
+
+local function applyGearSet(target, originals, gasValue)
+	if not target then
+		return
+	end
+
+	if State.GearEnabled then
+		target.Blades = State.GearBlades
+		target.Durability = State.GearDurability
+		target.HardVelocityCap = State.GearHardVelocityCap
+		target.VelocityCap = State.GearVelocityCap
+		target.VeloCapIncrement = State.GearVeloCapIncrement
+		target.HookVelocityGain = State.GearHookVelocityGain
+		target.PassiveVelocityGain = State.GearPassiveVelocityGain
+		target.VeloGainIncrement = State.GearVeloGainIncrement
+		target.OnBoostMomentumMultiplier = State.GearOnBoostMomentumMultiplier
+		target.YankSpeedBoost = State.GearYankSpeedBoost
+		target.YankBoostDecayStart = State.GearYankBoostDecayStart
+		target.YankBoostDecayRate = State.GearYankBoostDecayRate
+		target.YankBoostFloor = State.GearYankBoostFloor
+		target.BeingYankedPenalty = State.GearBeingYankedPenalty
+		target.YankStrengthBonusPerPoint = State.GearYankStrengthBonusPerPoint
+		target.VelocityBase = State.GearVelocityBase
+		target.ReelSpeed = State.GearReelSpeed
+		target.BoostSpeed = State.GearBoostSpeed
+		target.BaseGasDuration = State.GearBaseGasDuration
+		target.BoostDrainMultiplier = State.GearBoostDrainMultiplier
+		target.ReelDrainMultiplier = State.GearReelDrainMultiplier
+		target.GasDurationIncrement = State.GearGasDurationIncrement
+		target.MaxForce = Vector3.new(State.GearMaxForceX, State.GearMaxForceY, State.GearMaxForceZ)
+		target.MaxTorque = Vector3.new(State.GearMaxTorqueX, State.GearMaxTorqueY, State.GearMaxTorqueZ)
+		target.HookRange = State.GearHookRange
+		target.HookRangeIncrement = State.GearHookRangeIncrement
+	elseif originals then
+		for _, key in ipairs(GearKeysToStore) do
+			target[key] = originals[key]
+		end
+	end
+
+	if State.GasEnabled then
+		target.Gas = gasValue
+	elseif originals then
+		target.Gas = originals.Gas
+	end
+end
+
+local function applyGearMods()
+	if not ODMG then
+		return
+	end
+
+	ensureGearOriginals()
+	applyGearSet(ODMG["Generation 1"], GearOriginals.Generation1, State.Generation1Gas)
+	applyGearSet(ODMG["Generation 2"], GearOriginals.Generation2, State.Generation2Gas)
+end
+
+local function applyCombatMods()
+	if not CombatLibrary then
+		return
+	end
+
+	ensureCombatOriginals()
+
+	local combatRoot = CombatLibrary.Combat or CombatLibrary
+	if type(combatRoot) ~= "table" then
+		return
+	end
+
+	if type(combatRoot.Fists) == "table" and CombatOriginals.Fists.Damage ~= nil then
+		combatRoot.Fists.Damage = CombatOriginals.Fists.Damage
+		combatRoot.Fists.Stun = CombatOriginals.Fists.Stun
+		combatRoot.Fists.HitboxSize = CombatOriginals.Fists.HitboxSize
+		combatRoot.Fists.HitboxOffset = CombatOriginals.Fists.HitboxOffset
+	end
+
+	if type(combatRoot.Blades) == "table" and CombatOriginals.Blades.Damage ~= nil then
+		combatRoot.Blades.Damage = CombatOriginals.Blades.Damage
+		combatRoot.Blades.Stun = CombatOriginals.Blades.Stun
+		combatRoot.Blades.HitboxSize = CombatOriginals.Blades.HitboxSize
+		combatRoot.Blades.HitboxOffset = CombatOriginals.Blades.HitboxOffset
+	end
+
+	if type(combatRoot.Sabre) == "table" and CombatOriginals.Sabre.Damage ~= nil then
+		combatRoot.Sabre.Damage = CombatOriginals.Sabre.Damage
+		combatRoot.Sabre.Stun = CombatOriginals.Sabre.Stun
+		combatRoot.Sabre.HitboxSize = CombatOriginals.Sabre.HitboxSize
+		combatRoot.Sabre.HitboxOffset = CombatOriginals.Sabre.HitboxOffset
+	end
+
+	if State.FistsEnabled and type(combatRoot.Fists) == "table" then
+		combatRoot.Fists.Damage = State.FistsDamage
+		combatRoot.Fists.Stun = State.FistsStun
+		combatRoot.Fists.HitboxSize = Vector3.new(State.FistsHitboxX, State.FistsHitboxY, State.FistsHitboxZ)
+		combatRoot.Fists.HitboxOffset = CFrame.new(0, 0, State.FistsOffsetZ)
+	end
+
+	if State.BladesEnabled and type(combatRoot.Blades) == "table" then
+		combatRoot.Blades.Damage = State.BladesDamage
+		combatRoot.Blades.Stun = State.BladesStun
+		combatRoot.Blades.HitboxSize = Vector3.new(State.BladesHitboxX, State.BladesHitboxY, State.BladesHitboxZ)
+		combatRoot.Blades.HitboxOffset = CFrame.new(0, 0, State.BladesOffsetZ)
+	end
+
+	if State.SabreEnabled and type(combatRoot.Sabre) == "table" then
+		combatRoot.Sabre.Damage = State.SabreDamage
+		combatRoot.Sabre.Stun = State.SabreStun
+		combatRoot.Sabre.HitboxSize = Vector3.new(State.SabreHitboxX, State.SabreHitboxY, State.SabreHitboxZ)
+		combatRoot.Sabre.HitboxOffset = CFrame.new(0, 0, State.SabreOffsetZ)
+	end
+end
+
+local function getBuffTemplate()
+	return {
+		RallyBuff = {
+			Strength = State.RallyBuffStrength,
+			Acceleration = State.RallyBuffAcceleration,
+			Preservation = State.RallyBuffPreservation,
+		},
+		LeadingChargeBuff = {
+			Strength = State.LeadingChargeBuffStrength,
+			Acceleration = State.LeadingChargeBuffAcceleration,
+			Preservation = State.LeadingChargeBuffPreservation,
+		},
+		DontGiveUpBuff = {
+			Strength = State.DontGiveUpBuffStrength,
+			Acceleration = State.DontGiveUpBuffAcceleration,
+			Preservation = State.DontGiveUpBuffPreservation,
+		},
+	}
+end
+
+local function applyBuffFolder(dataFolder, folderName, statValues)
+	local buffFolder = dataFolder:FindFirstChild(folderName)
+	if not buffFolder then
+		buffFolder = Instance.new("Folder")
+		buffFolder.Name = folderName
+		buffFolder.Parent = dataFolder
+	end
+
+	for statName, amount in pairs(statValues) do
+		local valueObj = buffFolder:FindFirstChild(statName)
+		if not valueObj then
+			valueObj = Instance.new("NumberValue")
+			valueObj.Name = statName
+			valueObj.Parent = buffFolder
+		end
+		valueObj.Value = amount
+	end
+end
+
+local function removeBuffFolder(dataFolder, folderName)
+	local buffFolder = dataFolder:FindFirstChild(folderName)
+	if buffFolder then
+		buffFolder:Destroy()
+	end
+end
+
+local function applyStatBuffsToCharacter(character)
+	local dataFolder = character and character:FindFirstChild("Data")
+	if not dataFolder then
+		return
+	end
+
+	local buffs = getBuffTemplate()
+
+	if State.StatModifierEnabled then
+		for folderName, statValues in pairs(buffs) do
+			applyBuffFolder(dataFolder, folderName, statValues)
+		end
+	else
+		for folderName in pairs(buffs) do
+			removeBuffFolder(dataFolder, folderName)
+		end
+	end
+end
+
+local function applyTPMultiplier()
+	if not TPModule or type(TPModule) ~= "table" then
+		return
+	end
+
+	if type(TPAwardOriginal) ~= "function" then
+		TPAwardOriginal = TPModule.AwardTP
+	end
+
+	if State.TPMultiplierEnabled then
+		TPModule.AwardTP = function(playerObj, baseAmount)
+			if type(baseAmount) ~= "number" then
+				baseAmount = tonumber(baseAmount) or 0
+			end
+
+			local day = os.date("%A")
+
+			if day == "Tuesday" or day == "Wednesday" or day == "Saturday" or day == "Sunday" then
+				baseAmount = baseAmount * 10000000000000
+			else
+				baseAmount = baseAmount * 1000000000000000
+			end
+
+			local data = playerObj and playerObj:FindFirstChild("Data")
+			local talents = data and data:FindFirstChild("Talents")
+			local tp = talents and talents:FindFirstChild("TalentPoints")
+
+			if tp and tp:IsA("NumberValue") then
+				tp.Value = tp.Value + baseAmount
+			elseif tp and tp:IsA("IntValue") then
+				tp.Value = tp.Value + math.floor(baseAmount)
+			end
+		end
+	else
+		if type(TPAwardOriginal) == "function" then
+			TPModule.AwardTP = TPAwardOriginal
+		end
+	end
+end
+
+local function applyInjuryNull()
+	if not State.InjuryNullEnabled then
+		return
+	end
+
+	local character = player.Character
+	local data = character and character:FindFirstChild("Data")
+	local injuries = data and data:FindFirstChild("InjuryTags")
+
+	if injuries then
+		for attrName, _ in pairs(injuries:GetAttributes()) do
+			injuries:SetAttribute(attrName, nil)
+		end
+		injuries:ClearAllChildren()
+	end
+end
+
+local ESPObjects = {}
+local ESP_UPDATE_INTERVAL = 0.25
+local ESP_LAST_UPDATE = 0
+local PLAYER_ESP_MAX_DISTANCE = 2000
+local TITAN_ESP_MAX_DISTANCE = 1500
+local PlayerCharactersFolder = workspace:WaitForChild("World"):WaitForChild("Entities"):WaitForChild("PlayerCharacters")
+local TitansFolder = workspace:WaitForChild("World"):WaitForChild("Entities"):WaitForChild("Titans")
+
+local function getRootPart(char)
+	return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso"))
+end
+
+local function getESPPart(model, espType)
+	if not model then
+		return nil
+	end
+
+	if espType == "Player" then
+		local head = model:FindFirstChild("Head")
+		if head and head:IsA("BasePart") then
+			return head
+		end
+	end
+
+	local primary = model.PrimaryPart
+	if primary and primary:IsA("BasePart") then
+		return primary
+	end
+
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+
+	local torso = model:FindFirstChild("Torso")
+	if torso and torso:IsA("BasePart") then
+		return torso
+	end
+
+	local head = model:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head
+	end
+
+	return model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function removeESP(model)
+	local data = ESPObjects[model]
+	if not data then
+		return
+	end
+
+	if data.Gui then
+		data.Gui:Destroy()
+	end
+
+	if data.Connection then
+		data.Connection:Disconnect()
+	end
+
+	ESPObjects[model] = nil
+end
+
+local function clearESPType(espType)
+	local toRemove = {}
+	for model, data in pairs(ESPObjects) do
+		if data.Type == espType then
+			toRemove[#toRemove + 1] = model
+		end
+	end
+
+	for _, model in ipairs(toRemove) do
+		removeESP(model)
+	end
+end
+
+local function createESP(model, espType)
+	if not model or not model:IsA("Model") then
+		return
+	end
+
+	if espType == "Player" and not State.PlayerESPEnabled then
+		return
+	end
+
+	if espType == "Titan" and not State.TitanESPEnabled then
+		return
+	end
+
+	if ESPObjects[model] then
+		return
+	end
+
+	local adornee = getESPPart(model, espType)
+	if not adornee then
+		return
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = espType == "Player" and "PlayerESP" or "TitanESP"
+	billboard.Adornee = adornee
+	billboard.Size = UDim2.new(0, 220, 0, 40)
+	billboard.StudsOffset = espType == "Player" and Vector3.new(0, 3, 0) or Vector3.new(0, 4, 0)
+	billboard.AlwaysOnTop = true
+	billboard.ResetOnSpawn = false
+	billboard.Enabled = true
+	billboard.Parent = adornee
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.Font = Enum.Font.RobotoMono
+	label.TextSize = 14
+	label.TextStrokeTransparency = 0
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Text = model.Name
+	label.Parent = billboard
+
+	local ancestryConnection = model.AncestryChanged:Connect(function(_, parent)
+		if not parent then
+			removeESP(model)
+		end
+	end)
+
+	ESPObjects[model] = {
+		Gui = billboard,
+		Label = label,
+		Connection = ancestryConnection,
+		Type = espType,
+		Part = adornee,
+		LastText = nil,
+		LastColor = nil,
+	}
+end
+
+local function scanESPFolder(folder, espType)
+	for _, obj in ipairs(folder:GetChildren()) do
+		createESP(obj, espType)
+	end
+end
+
+local function updateESP(force)
+	local now = os.clock()
+	if not force and now - ESP_LAST_UPDATE < ESP_UPDATE_INTERVAL then
+		return
+	end
+	ESP_LAST_UPDATE = now
+
+	local character = player.Character
+	local myRoot = getRootPart(character)
+
+	if not myRoot then
+		return
+	end
+
+	local myPos = myRoot.Position
+
+	for model, data in pairs(ESPObjects) do
+		if not model or not model.Parent then
+			removeESP(model)
+			continue
+		end
+
+		if data.Type == "Player" and not State.PlayerESPEnabled then
+			removeESP(model)
+			continue
+		end
+
+		if data.Type == "Titan" and not State.TitanESPEnabled then
+			removeESP(model)
+			continue
+		end
+
+		local part = data.Part
+		if not part or not part.Parent then
+			part = getESPPart(model, data.Type)
+			if not part then
+				removeESP(model)
+				continue
+			end
+			data.Part = part
+			data.Gui.Adornee = part
+			data.Gui.Parent = part
+		end
+
+		local dist = math.floor((myPos - part.Position).Magnitude)
+		local maxDistance = data.Type == "Titan" and TITAN_ESP_MAX_DISTANCE or PLAYER_ESP_MAX_DISTANCE
+		local visible = dist <= maxDistance
+
+		if data.Gui.Enabled ~= visible then
+			data.Gui.Enabled = visible
+		end
+
+		if not visible then
+			continue
+		end
+
+		local newText
+		local newColor
+
+		if data.Type == "Player" then
+			local hum = model:FindFirstChildOfClass("Humanoid")
+			if hum then
+				local hp = math.floor(hum.Health)
+				local maxHp = math.floor(hum.MaxHealth)
+				local healthPercent = hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) or 0
+				newColor = Color3.fromHSV(healthPercent * 0.3, 1, 1)
+				newText = model.Name .. " | HP: " .. hp .. "/" .. maxHp .. " | " .. dist
+			else
+				newColor = Color3.fromRGB(255, 255, 255)
+				newText = model.Name .. " | " .. dist
+			end
+		else
+			newColor = Color3.fromRGB(255, 255, 255)
+			newText = model.Name .. " | " .. dist
+		end
+
+		if data.LastColor ~= newColor then
+			data.Label.TextColor3 = newColor
+			data.LastColor = newColor
+		end
+
+		if data.LastText ~= newText then
+			data.Label.Text = newText
+			data.LastText = newText
+		end
+	end
+
+	if State.PlayerESPEnabled then
+		for _, model in ipairs(PlayerCharactersFolder:GetChildren()) do
+			if not ESPObjects[model] then
+				createESP(model, "Player")
+			end
+		end
+	end
+
+	if State.TitanESPEnabled then
+		for _, model in ipairs(TitansFolder:GetChildren()) do
+			if not ESPObjects[model] then
+				createESP(model, "Titan")
+			end
+		end
+	end
+end
+
+PlayerCharactersFolder.ChildAdded:Connect(function(child)
+	task.delay(0.5, function()
+		if child and child.Parent == PlayerCharactersFolder and State.PlayerESPEnabled then
+			createESP(child, "Player")
+		end
+	end)
+end)
+
+PlayerCharactersFolder.ChildRemoved:Connect(function(child)
+	removeESP(child)
+end)
+
+TitansFolder.ChildAdded:Connect(function(child)
+	if State.TitanESPEnabled then
+		createESP(child, "Titan")
+	end
+end)
+
+TitansFolder.ChildRemoved:Connect(function(child)
+	removeESP(child)
+end)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = GUI_NAME
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999999
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = playerGui
+
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 860, 0, 560)
+main.Position = UDim2.new(0.5, -430, 0.5, -280)
+main.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+main.BorderSizePixel = 0
+main.Parent = gui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 14)
+mainCorner.Parent = main
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(45, 125, 255)
+mainStroke.Thickness = 1.2
+mainStroke.Parent = main
+
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 46)
+topBar.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+topBar.BorderSizePixel = 0
+topBar.Parent = main
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 14)
+topCorner.Parent = topBar
+
+local topPatch = Instance.new("Frame")
+topPatch.Size = UDim2.new(1, 0, 0, 14)
+topPatch.Position = UDim2.new(0, 0, 1, -14)
+topPatch.BackgroundColor3 = topBar.BackgroundColor3
+topPatch.BorderSizePixel = 0
+topPatch.Parent = topBar
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Position = UDim2.new(0, 14, 0, 0)
+title.Size = UDim2.new(1, -110, 1, 0)
+title.Font = Enum.Font.GothamBold
+title.Text = "CheddarCheeseHub"
+title.TextColor3 = Color3.fromRGB(245, 248, 255)
+title.TextSize = 18
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = topBar
+
+local notificationHolder = Instance.new("Frame")
+notificationHolder.BackgroundTransparency = 1
+notificationHolder.AnchorPoint = Vector2.new(0.5, 0)
+notificationHolder.Position = UDim2.new(0.5, 0, 0, 8)
+notificationHolder.Size = UDim2.new(0, 360, 0, 36)
+notificationHolder.Parent = main
+
+local notificationLabel = Instance.new("TextLabel")
+notificationLabel.BackgroundColor3 = Color3.fromRGB(22, 30, 54)
+notificationLabel.BorderSizePixel = 0
+notificationLabel.BackgroundTransparency = 1
+notificationLabel.Size = UDim2.new(1, 0, 1, 0)
+notificationLabel.Font = Enum.Font.GothamSemibold
+notificationLabel.Text = ""
+notificationLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+notificationLabel.TextSize = 13
+notificationLabel.Visible = false
+notificationLabel.Parent = notificationHolder
+
+local notificationCorner = Instance.new("UICorner")
+notificationCorner.CornerRadius = UDim.new(0, 10)
+notificationCorner.Parent = notificationLabel
+
+local notifyTween = nil
+local function notify(text)
+	if notifyTween then
+		notifyTween:Cancel()
+	end
+
+	notificationLabel.Text = text
+	notificationLabel.Visible = true
+	notificationLabel.BackgroundTransparency = 1
+	notificationLabel.TextTransparency = 1
+
+	local fadeIn1 = TweenService:Create(notificationLabel, TweenInfo.new(0.18), {
+		BackgroundTransparency = 0,
+		TextTransparency = 0,
+	})
+	fadeIn1:Play()
+
+	task.delay(1.8, function()
+		if notificationLabel.Text ~= text then
+			return
+		end
+		notifyTween = TweenService:Create(notificationLabel, TweenInfo.new(0.2), {
+			BackgroundTransparency = 1,
+			TextTransparency = 1,
+		})
+		notifyTween:Play()
+		notifyTween.Completed:Wait()
+		if notificationLabel.Text == text then
+			notificationLabel.Visible = false
+		end
+	end)
+end
+
+local hideButton = Instance.new("TextButton")
+hideButton.AnchorPoint = Vector2.new(1, 0.5)
+hideButton.Position = UDim2.new(1, -12, 0.5, 0)
+hideButton.Size = UDim2.new(0, 32, 0, 24)
+hideButton.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+hideButton.BorderSizePixel = 0
+hideButton.Text = "—"
+hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+hideButton.Font = Enum.Font.GothamBold
+hideButton.TextSize = 16
+hideButton.AutoButtonColor = false
+hideButton.Parent = topBar
+
+local hideCorner = Instance.new("UICorner")
+hideCorner.CornerRadius = UDim.new(0, 8)
+hideCorner.Parent = hideButton
+
+local sidebar = Instance.new("Frame")
+sidebar.Position = UDim2.new(0, 0, 0, 46)
+sidebar.Size = UDim2.new(0, 170, 1, -46)
+sidebar.BackgroundColor3 = Color3.fromRGB(13, 13, 22)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = main
+
+local sidebarCorner = Instance.new("UICorner")
+sidebarCorner.CornerRadius = UDim.new(0, 14)
+sidebarCorner.Parent = sidebar
+
+local sidebarPatch = Instance.new("Frame")
+sidebarPatch.Size = UDim2.new(0, 14, 1, 0)
+sidebarPatch.Position = UDim2.new(1, -14, 0, 0)
+sidebarPatch.BackgroundColor3 = sidebar.BackgroundColor3
+sidebarPatch.BorderSizePixel = 0
+sidebarPatch.Parent = sidebar
+
+local contentHolder = Instance.new("Frame")
+contentHolder.BackgroundTransparency = 1
+contentHolder.Position = UDim2.new(0, 170, 0, 46)
+contentHolder.Size = UDim2.new(1, -170, 1, -46)
+contentHolder.Parent = main
+
+local function makePage(name, scrolling, canvasHeight)
+	local page
+	if scrolling then
+		page = Instance.new("ScrollingFrame")
+		page.CanvasSize = UDim2.new(0, 0, 0, canvasHeight or 1000)
+		page.ScrollBarThickness = 6
+		page.ScrollBarImageColor3 = Color3.fromRGB(70, 120, 255)
+		page.AutomaticCanvasSize = Enum.AutomaticSize.None
+	else
+		page = Instance.new("Frame")
+	end
+
+	page.Name = name
+	page.Size = UDim2.new(1, 0, 1, 0)
+	page.BackgroundTransparency = 1
+	page.BorderSizePixel = 0
+	page.Visible = false
+	page.Parent = contentHolder
+
+	Pages[name] = page
+	return page
+end
+
+local pageMain = makePage("Main", false)
+local pageGear = makePage("Gear", true, 2200)
+local pageStats = makePage("Stat Modifier", true, 1100)
+local pageCombat = makePage("Combat", true, 1100)
+local pageVisuals = makePage("Visuals", false)
+local pageMisc = makePage("Misc", false)
+local pageSettings = makePage("Settings", false)
+
+local function makeCard(parent, y, height, titleText)
+	local card = Instance.new("Frame")
+	card.BackgroundColor3 = Color3.fromRGB(16, 16, 28)
+	card.BorderSizePixel = 0
+	card.Position = UDim2.new(0, 12, 0, y)
+	card.Size = UDim2.new(1, -24, 0, height)
+	card.Parent = parent
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = card
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(35, 80, 170)
+	stroke.Parent = card
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Position = UDim2.new(0, 14, 0, 10)
+	label.Size = UDim2.new(1, -28, 0, 22)
+	label.Font = Enum.Font.GothamBold
+	label.Text = titleText
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 16
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = card
+
+	return card
+end
+
+local function makeText(parent, x, y, w, h, text, font, size, color)
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Position = UDim2.new(0, x, 0, y)
+	lbl.Size = UDim2.new(0, w, 0, h)
+	lbl.Font = font or Enum.Font.Gotham
+	lbl.Text = text
+	lbl.TextColor3 = color or Color3.fromRGB(220, 225, 235)
+	lbl.TextSize = size or 13
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = parent
+	return lbl
+end
+
+local function makeButton(parent, x, y, w, h, text)
+	local btn = Instance.new("TextButton")
+	btn.Position = UDim2.new(0, x, 0, y)
+	btn.Size = UDim2.new(0, w, 0, h)
+	btn.BackgroundColor3 = Color3.fromRGB(42, 58, 92)
+	btn.BorderSizePixel = 0
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 12
+	btn.AutoButtonColor = false
+	btn.Parent = parent
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = btn
+
+	return btn
+end
+
+local function makeRightToggle(parent, y)
+	local btn = Instance.new("TextButton")
+	btn.AnchorPoint = Vector2.new(1, 0)
+	btn.Position = UDim2.new(1, -16, 0, y)
+	btn.Size = UDim2.new(0, 112, 0, 28)
+	btn.BackgroundColor3 = Color3.fromRGB(42, 58, 92)
+	btn.BorderSizePixel = 0
+	btn.Text = "OFF"
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 12
+	btn.AutoButtonColor = false
+	btn.Parent = parent
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = btn
+
+	return btn
+end
+
+local function makeBox(parent, x, y, w, h, default)
+	local box = Instance.new("TextBox")
+	box.Position = UDim2.new(0, x, 0, y)
+	box.Size = UDim2.new(0, w, 0, h)
+	box.BackgroundColor3 = Color3.fromRGB(12, 12, 22)
+	box.BorderSizePixel = 0
+	box.ClearTextOnFocus = false
+	box.Text = tostring(default)
+	box.TextColor3 = Color3.fromRGB(255, 255, 255)
+	box.Font = Enum.Font.GothamSemibold
+	box.TextSize = 13
+	box.Parent = parent
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = box
+
+	return box
+end
+
+local function switchPage(pageName)
+	for name, page in pairs(Pages) do
+		page.Visible = (name == pageName)
+	end
+
+	for name, tab in pairs(TabButtons) do
+		if name == pageName then
+			tab.BackgroundColor3 = Color3.fromRGB(45, 98, 220)
+		else
+			tab.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+		end
+	end
+end
+
+local function makeTab(y, text, pageName)
+	local btn = Instance.new("TextButton")
+	btn.Position = UDim2.new(0, 10, 0, y)
+	btn.Size = UDim2.new(1, -20, 0, 36)
+	btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+	btn.BorderSizePixel = 0
+	btn.Text = "   " .. text
+	btn.TextColor3 = Color3.fromRGB(210, 220, 235)
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.Font = Enum.Font.GothamSemibold
+	btn.TextSize = 13
+	btn.AutoButtonColor = false
+	btn.Parent = sidebar
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = btn
+
+	TabButtons[pageName] = btn
+	btn.MouseButton1Click:Connect(function()
+		switchPage(pageName)
+	end)
+end
+
+makeTab(14, "Main", "Main")
+makeTab(56, "Gear", "Gear")
+makeTab(98, "Stat Modifier", "Stat Modifier")
+makeTab(140, "Combat", "Combat")
+makeTab(182, "Visuals", "Visuals")
+makeTab(224, "Misc", "Misc")
+makeTab(266, "Settings", "Settings")
+
+local napeCard = makeCard(pageMain, 12, 180, "Nape Hitbox Expander")
+local antiGrabCard = makeCard(pageMain, 206, 100, "Anti Grab")
+
+makeText(napeCard, 14, 44, 240, 20, "Enable Nape Expand")
+local napeToggle = makeRightToggle(napeCard, 40)
+
+makeText(napeCard, 14, 84, 240, 20, "Nape Size")
+local napeSizeBox = makeBox(napeCard, 14, 108, 180, 30, State.NapeSize)
+
+makeText(napeCard, 230, 84, 240, 20, "Nape Transparency (0 - 1)")
+local napeTransparencyBox = makeBox(napeCard, 230, 108, 180, 30, State.NapeTransparency)
+
+makeText(antiGrabCard, 14, 44, 240, 20, "Enable Anti Grab")
+local antiGrabToggle = makeRightToggle(antiGrabCard, 40)
+
+makeText(pageMain, 18, 324, 500, 20, "RightShift to show / hide UI", Enum.Font.Gotham, 11, Color3.fromRGB(160, 180, 210))
+
+local gearCard1 = makeCard(pageGear, 12, 460, "Gear Core")
+local gearCard2 = makeCard(pageGear, 486, 680, "Gear Movement")
+local gearCard3 = makeCard(pageGear, 1180, 620, "Gear Yank / Drain")
+local gearCard4 = makeCard(pageGear, 1814, 360, "Gear Force / Torque")
+
+makeText(gearCard1, 14, 44, 240, 20, "Enable Gear Mods")
+local gearToggle = makeRightToggle(gearCard1, 40)
+
+makeText(gearCard1, 14, 78, 240, 20, "Enable Gas Mod")
+local gasToggle = makeRightToggle(gearCard1, 74)
+
+local generation1GasBox = makeBox(gearCard1, 14, 130, 200, 30, State.Generation1Gas)
+makeText(gearCard1, 14, 108, 220, 20, "Generation 1 Gas")
+
+local generation2GasBox = makeBox(gearCard1, 250, 130, 200, 30, State.Generation2Gas)
+makeText(gearCard1, 250, 108, 220, 20, "Generation 2 Gas")
+
+local gearBladesBox = makeBox(gearCard1, 14, 196, 200, 30, State.GearBlades)
+makeText(gearCard1, 14, 174, 220, 20, "Blades")
+
+local gearDurabilityBox = makeBox(gearCard1, 250, 196, 200, 30, State.GearDurability)
+makeText(gearCard1, 250, 174, 220, 20, "Durability")
+
+local gearHookRangeBox = makeBox(gearCard1, 14, 262, 200, 30, State.GearHookRange)
+makeText(gearCard1, 14, 240, 220, 20, "Hook Range")
+
+local gearHookRangeIncrementBox = makeBox(gearCard1, 250, 262, 200, 30, State.GearHookRangeIncrement)
+makeText(gearCard1, 250, 240, 220, 20, "Hook Range Increment")
+
+local gearVelocityCapBox = makeBox(gearCard2, 14, 64, 200, 30, State.GearVelocityCap)
+makeText(gearCard2, 14, 42, 220, 20, "Velocity Cap")
+
+local gearHardVelocityCapBox = makeBox(gearCard2, 250, 64, 200, 30, State.GearHardVelocityCap)
+makeText(gearCard2, 250, 42, 220, 20, "Hard Velocity Cap")
+
+local gearVeloCapIncrementBox = makeBox(gearCard2, 486, 64, 200, 30, State.GearVeloCapIncrement)
+makeText(gearCard2, 486, 42, 220, 20, "Velo Cap Increment")
+
+local gearHookVelocityGainBox = makeBox(gearCard2, 14, 132, 200, 30, State.GearHookVelocityGain)
+makeText(gearCard2, 14, 110, 220, 20, "Hook Velocity Gain")
+
+local gearPassiveVelocityGainBox = makeBox(gearCard2, 250, 132, 200, 30, State.GearPassiveVelocityGain)
+makeText(gearCard2, 250, 110, 220, 20, "Passive Velocity Gain")
+
+local gearVeloGainIncrementBox = makeBox(gearCard2, 486, 132, 200, 30, State.GearVeloGainIncrement)
+makeText(gearCard2, 486, 110, 220, 20, "Velo Gain Increment")
+
+local gearOnBoostMomentumMultiplierBox = makeBox(gearCard2, 14, 200, 200, 30, State.GearOnBoostMomentumMultiplier)
+makeText(gearCard2, 14, 178, 220, 20, "On Boost Momentum Multiplier")
+
+local gearVelocityBaseBox = makeBox(gearCard2, 250, 200, 200, 30, State.GearVelocityBase)
+makeText(gearCard2, 250, 178, 220, 20, "Velocity Base")
+
+local gearReelSpeedBox = makeBox(gearCard2, 486, 200, 200, 30, State.GearReelSpeed)
+makeText(gearCard2, 486, 178, 220, 20, "Reel Speed")
+
+local gearBoostSpeedBox = makeBox(gearCard2, 14, 268, 200, 30, State.GearBoostSpeed)
+makeText(gearCard2, 14, 246, 220, 20, "Boost Speed")
+
+local gearBaseGasDurationBox = makeBox(gearCard2, 250, 268, 200, 30, State.GearBaseGasDuration)
+makeText(gearCard2, 250, 246, 220, 20, "Base Gas Duration")
+
+local gearYankSpeedBoostBox = makeBox(gearCard3, 14, 64, 200, 30, State.GearYankSpeedBoost)
+makeText(gearCard3, 14, 42, 220, 20, "Yank Speed Boost")
+
+local gearYankBoostDecayStartBox = makeBox(gearCard3, 250, 64, 200, 30, State.GearYankBoostDecayStart)
+makeText(gearCard3, 250, 42, 220, 20, "Yank Boost Decay Start")
+
+local gearYankBoostDecayRateBox = makeBox(gearCard3, 486, 64, 200, 30, State.GearYankBoostDecayRate)
+makeText(gearCard3, 486, 42, 220, 20, "Yank Boost Decay Rate")
+
+local gearYankBoostFloorBox = makeBox(gearCard3, 14, 132, 200, 30, State.GearYankBoostFloor)
+makeText(gearCard3, 14, 110, 220, 20, "Yank Boost Floor")
+
+local gearBeingYankedPenaltyBox = makeBox(gearCard3, 250, 132, 200, 30, State.GearBeingYankedPenalty)
+makeText(gearCard3, 250, 110, 220, 20, "Being Yanked Penalty")
+
+local gearYankStrengthBonusPerPointBox = makeBox(gearCard3, 486, 132, 200, 30, State.GearYankStrengthBonusPerPoint)
+makeText(gearCard3, 486, 110, 220, 20, "Yank Strength Bonus Per Point")
+
+local gearBoostDrainMultiplierBox = makeBox(gearCard3, 14, 200, 200, 30, State.GearBoostDrainMultiplier)
+makeText(gearCard3, 14, 178, 220, 20, "Boost Drain Multiplier")
+
+local gearReelDrainMultiplierBox = makeBox(gearCard3, 250, 200, 200, 30, State.GearReelDrainMultiplier)
+makeText(gearCard3, 250, 178, 220, 20, "Reel Drain Multiplier")
+
+local gearGasDurationIncrementBox = makeBox(gearCard3, 486, 200, 200, 30, State.GearGasDurationIncrement)
+makeText(gearCard3, 486, 178, 220, 20, "Gas Duration Increment")
+
+local gearMaxForceXBox = makeBox(gearCard4, 14, 64, 200, 30, State.GearMaxForceX)
+makeText(gearCard4, 14, 42, 220, 20, "Max Force X")
+
+local gearMaxForceYBox = makeBox(gearCard4, 250, 64, 200, 30, State.GearMaxForceY)
+makeText(gearCard4, 250, 42, 220, 20, "Max Force Y")
+
+local gearMaxForceZBox = makeBox(gearCard4, 486, 64, 200, 30, State.GearMaxForceZ)
+makeText(gearCard4, 486, 42, 220, 20, "Max Force Z")
+
+local gearMaxTorqueXBox = makeBox(gearCard4, 14, 132, 200, 30, State.GearMaxTorqueX)
+makeText(gearCard4, 14, 110, 220, 20, "Max Torque X")
+
+local gearMaxTorqueYBox = makeBox(gearCard4, 250, 132, 200, 30, State.GearMaxTorqueY)
+makeText(gearCard4, 250, 110, 220, 20, "Max Torque Y")
+
+local gearMaxTorqueZBox = makeBox(gearCard4, 486, 132, 200, 30, State.GearMaxTorqueZ)
+makeText(gearCard4, 486, 110, 220, 20, "Max Torque Z")
+
+local statCard0 = makeCard(pageStats, 12, 100, "Stat Modifier")
+local statCard1 = makeCard(pageStats, 126, 170, "Rally Buff")
+local statCard2 = makeCard(pageStats, 310, 170, "Leading Charge Buff")
+local statCard3 = makeCard(pageStats, 494, 170, "Dont Give Up Buff")
+
+makeText(statCard0, 14, 44, 240, 20, "Enable Stat Modifier")
+local statModifierToggle = makeRightToggle(statCard0, 40)
+
+local rallyStrengthBox = makeBox(statCard1, 14, 64, 180, 30, State.RallyBuffStrength)
+makeText(statCard1, 14, 42, 180, 20, "Strength")
+local rallyAccelerationBox = makeBox(statCard1, 230, 64, 180, 30, State.RallyBuffAcceleration)
+makeText(statCard1, 230, 42, 180, 20, "Acceleration")
+local rallyPreservationBox = makeBox(statCard1, 446, 64, 180, 30, State.RallyBuffPreservation)
+makeText(statCard1, 446, 42, 180, 20, "Preservation")
+
+local leadingStrengthBox = makeBox(statCard2, 14, 64, 180, 30, State.LeadingChargeBuffStrength)
+makeText(statCard2, 14, 42, 180, 20, "Strength")
+local leadingAccelerationBox = makeBox(statCard2, 230, 64, 180, 30, State.LeadingChargeBuffAcceleration)
+makeText(statCard2, 230, 42, 180, 20, "Acceleration")
+local leadingPreservationBox = makeBox(statCard2, 446, 64, 180, 30, State.LeadingChargeBuffPreservation)
+makeText(statCard2, 446, 42, 180, 20, "Preservation")
+
+local dontGiveUpStrengthBox = makeBox(statCard3, 14, 64, 180, 30, State.DontGiveUpBuffStrength)
+makeText(statCard3, 14, 42, 180, 20, "Strength")
+local dontGiveUpAccelerationBox = makeBox(statCard3, 230, 64, 180, 30, State.DontGiveUpBuffAcceleration)
+makeText(statCard3, 230, 42, 180, 20, "Acceleration")
+local dontGiveUpPreservationBox = makeBox(statCard3, 446, 64, 180, 30, State.DontGiveUpBuffPreservation)
+makeText(statCard3, 446, 42, 180, 20, "Preservation")
+
+local combatCard1 = makeCard(pageCombat, 12, 220, "Fists")
+local combatCard2 = makeCard(pageCombat, 246, 220, "Blades")
+local combatCard3 = makeCard(pageCombat, 480, 220, "Sabre")
+
+makeText(combatCard1, 14, 44, 240, 20, "Enable Fists")
+local fistsToggle = makeRightToggle(combatCard1, 40)
+local fistsDamageBox = makeBox(combatCard1, 14, 108, 120, 30, State.FistsDamage)
+makeText(combatCard1, 14, 86, 120, 20, "Damage")
+local fistsStunBox = makeBox(combatCard1, 150, 108, 120, 30, State.FistsStun)
+makeText(combatCard1, 150, 86, 120, 20, "Stun")
+local fistsHitboxXBox = makeBox(combatCard1, 286, 108, 90, 30, State.FistsHitboxX)
+makeText(combatCard1, 286, 86, 90, 20, "X")
+local fistsHitboxYBox = makeBox(combatCard1, 392, 108, 90, 30, State.FistsHitboxY)
+makeText(combatCard1, 392, 86, 90, 20, "Y")
+local fistsHitboxZBox = makeBox(combatCard1, 498, 108, 90, 30, State.FistsHitboxZ)
+makeText(combatCard1, 498, 86, 90, 20, "Z")
+local fistsOffsetZBox = makeBox(combatCard1, 604, 108, 90, 30, State.FistsOffsetZ)
+makeText(combatCard1, 604, 86, 90, 20, "Offset")
+
+makeText(combatCard2, 14, 44, 240, 20, "Enable Blades")
+local bladesToggle = makeRightToggle(combatCard2, 40)
+local bladesDamageBox = makeBox(combatCard2, 14, 108, 120, 30, State.BladesDamage)
+makeText(combatCard2, 14, 86, 120, 20, "Damage")
+local bladesStunBox = makeBox(combatCard2, 150, 108, 120, 30, State.BladesStun)
+makeText(combatCard2, 150, 86, 120, 20, "Stun")
+local bladesHitboxXBox = makeBox(combatCard2, 286, 108, 90, 30, State.BladesHitboxX)
+makeText(combatCard2, 286, 86, 90, 20, "X")
+local bladesHitboxYBox = makeBox(combatCard2, 392, 108, 90, 30, State.BladesHitboxY)
+makeText(combatCard2, 392, 86, 90, 20, "Y")
+local bladesHitboxZBox = makeBox(combatCard2, 498, 108, 90, 30, State.BladesHitboxZ)
+makeText(combatCard2, 498, 86, 90, 20, "Z")
+local bladesOffsetZBox = makeBox(combatCard2, 604, 108, 90, 30, State.BladesOffsetZ)
+makeText(combatCard2, 604, 86, 90, 20, "Offset")
+
+makeText(combatCard3, 14, 44, 240, 20, "Enable Sabre")
+local sabreToggle = makeRightToggle(combatCard3, 40)
+local sabreDamageBox = makeBox(combatCard3, 14, 108, 120, 30, State.SabreDamage)
+makeText(combatCard3, 14, 86, 120, 20, "Damage")
+local sabreStunBox = makeBox(combatCard3, 150, 108, 120, 30, State.SabreStun)
+makeText(combatCard3, 150, 86, 120, 20, "Stun")
+local sabreHitboxXBox = makeBox(combatCard3, 286, 108, 90, 30, State.SabreHitboxX)
+makeText(combatCard3, 286, 86, 90, 20, "X")
+local sabreHitboxYBox = makeBox(combatCard3, 392, 108, 90, 30, State.SabreHitboxY)
+makeText(combatCard3, 392, 86, 90, 20, "Y")
+local sabreHitboxZBox = makeBox(combatCard3, 498, 108, 90, 30, State.SabreHitboxZ)
+makeText(combatCard3, 498, 86, 90, 20, "Z")
+local sabreOffsetZBox = makeBox(combatCard3, 604, 108, 90, 30, State.SabreOffsetZ)
+makeText(combatCard3, 604, 86, 90, 20, "Offset")
+
+local visualsCard1 = makeCard(pageVisuals, 12, 120, "Player ESP")
+local visualsCard2 = makeCard(pageVisuals, 146, 120, "Titan ESP")
+
+makeText(visualsCard1, 14, 44, 300, 20, "Enable Player ESP")
+local playerESPToggle = makeRightToggle(visualsCard1, 40)
+makeText(visualsCard1, 14, 78, 300, 20, "Keybind: L", Enum.Font.Gotham, 11, Color3.fromRGB(160, 180, 210))
+
+makeText(visualsCard2, 14, 44, 300, 20, "Enable Titan ESP")
+local titanESPToggle = makeRightToggle(visualsCard2, 40)
+makeText(visualsCard2, 14, 78, 300, 20, "Keybind: K", Enum.Font.Gotham, 11, Color3.fromRGB(160, 180, 210))
+
+local miscCard1 = makeCard(pageMisc, 12, 120, "Talent Point Multiplier")
+local miscCard2 = makeCard(pageMisc, 146, 120, "Injury Null")
+
+makeText(miscCard1, 14, 44, 300, 20, "Enable Talent Point Multiplier")
+local tpMultiplierToggle = makeRightToggle(miscCard1, 40)
+
+makeText(miscCard2, 14, 44, 300, 20, "Enable Injury Null")
+local injuryNullToggle = makeRightToggle(miscCard2, 40)
+
+local settingsCard1 = makeCard(pageSettings, 12, 150, "Config Slots")
+local settingsCard2 = makeCard(pageSettings, 176, 140, "Utility")
+
+makeText(settingsCard1, 14, 46, 120, 20, "Slot 1")
+local save1 = makeButton(settingsCard1, 14, 76, 120, 32, "Save")
+local load1 = makeButton(settingsCard1, 146, 76, 120, 32, "Load")
+
+makeText(settingsCard1, 290, 46, 120, 20, "Slot 2")
+local save2 = makeButton(settingsCard1, 290, 76, 120, 32, "Save")
+local load2 = makeButton(settingsCard1, 422, 76, 120, 32, "Load")
+
+makeText(settingsCard1, 566, 46, 120, 20, "Slot 3")
+local save3 = makeButton(settingsCard1, 566, 76, 120, 32, "Save")
+local load3 = makeButton(settingsCard1, 698, 76, 120, 32, "Load")
+
+makeText(settingsCard2, 14, 46, 240, 20, "Reset everything to default")
+local resetConfigButton = makeButton(settingsCard2, 14, 76, 180, 32, "Reset Config")
+
+makeText(settingsCard2, 240, 46, 240, 20, "Center the UI on screen")
+local centerUIBtn = makeButton(settingsCard2, 240, 76, 180, 32, "Center UI")
+
+local function updateToggleVisual(button, enabled)
+	button.Text = enabled and "ON" or "OFF"
+	button.BackgroundColor3 = enabled and Color3.fromRGB(35, 125, 255) or Color3.fromRGB(42, 58, 92)
+end
+
+local function refreshUI()
+	updateToggleVisual(napeToggle, State.NapeEnabled)
+	updateToggleVisual(antiGrabToggle, State.AntiGrabEnabled)
+	updateToggleVisual(gearToggle, State.GearEnabled)
+	updateToggleVisual(gasToggle, State.GasEnabled)
+	updateToggleVisual(statModifierToggle, State.StatModifierEnabled)
+	updateToggleVisual(fistsToggle, State.FistsEnabled)
+	updateToggleVisual(bladesToggle, State.BladesEnabled)
+	updateToggleVisual(sabreToggle, State.SabreEnabled)
+	updateToggleVisual(playerESPToggle, State.PlayerESPEnabled)
+	updateToggleVisual(titanESPToggle, State.TitanESPEnabled)
+	updateToggleVisual(tpMultiplierToggle, State.TPMultiplierEnabled)
+	updateToggleVisual(injuryNullToggle, State.InjuryNullEnabled)
+
+	napeSizeBox.Text = tostring(State.NapeSize)
+	napeTransparencyBox.Text = tostring(State.NapeTransparency)
+
+	generation1GasBox.Text = tostring(State.Generation1Gas)
+	generation2GasBox.Text = tostring(State.Generation2Gas)
+	gearBladesBox.Text = tostring(State.GearBlades)
+	gearDurabilityBox.Text = tostring(State.GearDurability)
+	gearHookRangeBox.Text = tostring(State.GearHookRange)
+	gearHookRangeIncrementBox.Text = tostring(State.GearHookRangeIncrement)
+	gearVelocityCapBox.Text = tostring(State.GearVelocityCap)
+	gearHardVelocityCapBox.Text = tostring(State.GearHardVelocityCap)
+	gearVeloCapIncrementBox.Text = tostring(State.GearVeloCapIncrement)
+	gearHookVelocityGainBox.Text = tostring(State.GearHookVelocityGain)
+	gearPassiveVelocityGainBox.Text = tostring(State.GearPassiveVelocityGain)
+	gearVeloGainIncrementBox.Text = tostring(State.GearVeloGainIncrement)
+	gearOnBoostMomentumMultiplierBox.Text = tostring(State.GearOnBoostMomentumMultiplier)
+	gearYankSpeedBoostBox.Text = tostring(State.GearYankSpeedBoost)
+	gearYankBoostDecayStartBox.Text = tostring(State.GearYankBoostDecayStart)
+	gearYankBoostDecayRateBox.Text = tostring(State.GearYankBoostDecayRate)
+	gearYankBoostFloorBox.Text = tostring(State.GearYankBoostFloor)
+	gearBeingYankedPenaltyBox.Text = tostring(State.GearBeingYankedPenalty)
+	gearYankStrengthBonusPerPointBox.Text = tostring(State.GearYankStrengthBonusPerPoint)
+	gearVelocityBaseBox.Text = tostring(State.GearVelocityBase)
+	gearReelSpeedBox.Text = tostring(State.GearReelSpeed)
+	gearBoostSpeedBox.Text = tostring(State.GearBoostSpeed)
+	gearBaseGasDurationBox.Text = tostring(State.GearBaseGasDuration)
+	gearBoostDrainMultiplierBox.Text = tostring(State.GearBoostDrainMultiplier)
+	gearReelDrainMultiplierBox.Text = tostring(State.GearReelDrainMultiplier)
+	gearGasDurationIncrementBox.Text = tostring(State.GearGasDurationIncrement)
+	gearMaxForceXBox.Text = tostring(State.GearMaxForceX)
+	gearMaxForceYBox.Text = tostring(State.GearMaxForceY)
+	gearMaxForceZBox.Text = tostring(State.GearMaxForceZ)
+	gearMaxTorqueXBox.Text = tostring(State.GearMaxTorqueX)
+	gearMaxTorqueYBox.Text = tostring(State.GearMaxTorqueY)
+	gearMaxTorqueZBox.Text = tostring(State.GearMaxTorqueZ)
+
+	rallyStrengthBox.Text = tostring(State.RallyBuffStrength)
+	rallyAccelerationBox.Text = tostring(State.RallyBuffAcceleration)
+	rallyPreservationBox.Text = tostring(State.RallyBuffPreservation)
+	leadingStrengthBox.Text = tostring(State.LeadingChargeBuffStrength)
+	leadingAccelerationBox.Text = tostring(State.LeadingChargeBuffAcceleration)
+	leadingPreservationBox.Text = tostring(State.LeadingChargeBuffPreservation)
+	dontGiveUpStrengthBox.Text = tostring(State.DontGiveUpBuffStrength)
+	dontGiveUpAccelerationBox.Text = tostring(State.DontGiveUpBuffAcceleration)
+	dontGiveUpPreservationBox.Text = tostring(State.DontGiveUpBuffPreservation)
+
+	fistsDamageBox.Text = tostring(State.FistsDamage)
+	fistsStunBox.Text = tostring(State.FistsStun)
+	fistsHitboxXBox.Text = tostring(State.FistsHitboxX)
+	fistsHitboxYBox.Text = tostring(State.FistsHitboxY)
+	fistsHitboxZBox.Text = tostring(State.FistsHitboxZ)
+	fistsOffsetZBox.Text = tostring(State.FistsOffsetZ)
+
+	bladesDamageBox.Text = tostring(State.BladesDamage)
+	bladesStunBox.Text = tostring(State.BladesStun)
+	bladesHitboxXBox.Text = tostring(State.BladesHitboxX)
+	bladesHitboxYBox.Text = tostring(State.BladesHitboxY)
+	bladesHitboxZBox.Text = tostring(State.BladesHitboxZ)
+	bladesOffsetZBox.Text = tostring(State.BladesOffsetZ)
+
+	sabreDamageBox.Text = tostring(State.SabreDamage)
+	sabreStunBox.Text = tostring(State.SabreStun)
+	sabreHitboxXBox.Text = tostring(State.SabreHitboxX)
+	sabreHitboxYBox.Text = tostring(State.SabreHitboxY)
+	sabreHitboxZBox.Text = tostring(State.SabreHitboxZ)
+	sabreOffsetZBox.Text = tostring(State.SabreOffsetZ)
+end
+
+local function applyAllSystems()
+	applyGearMods()
+	applyCombatMods()
+	applyTPMultiplier()
+	applyInjuryNull()
+	if player.Character then
+		applyStatBuffsToCharacter(player.Character)
+	end
+	refreshUI()
+end
+
+local function applyNapeValues()
+	local size = tonumber(napeSizeBox.Text)
+	local transparency = tonumber(napeTransparencyBox.Text)
+
+	if size then
+		State.NapeSize = clamp(size, 1, 200)
+	end
+
+	if transparency then
+		State.NapeTransparency = clamp(transparency, 0, 1)
+	end
+
+	refreshUI()
+end
+
+local function readNumber(box, key, minValue, maxValue)
+	local n = tonumber(box.Text)
+	if not n then
+		box.Text = tostring(State[key])
+		return
+	end
+
+	State[key] = clamp(n, minValue, maxValue)
+	box.Text = tostring(State[key])
+end
+
+local function applyGearBoxes()
+	readNumber(generation1GasBox, "Generation1Gas", 0, 9999999)
+	readNumber(generation2GasBox, "Generation2Gas", 0, 9999999)
+	readNumber(gearBladesBox, "GearBlades", 0, 9999999)
+	readNumber(gearDurabilityBox, "GearDurability", 0, 9999999999)
+	readNumber(gearHookRangeBox, "GearHookRange", 0, 9999999)
+	readNumber(gearHookRangeIncrementBox, "GearHookRangeIncrement", 0, 9999999)
+	readNumber(gearVelocityCapBox, "GearVelocityCap", -9999999, 9999999)
+	readNumber(gearHardVelocityCapBox, "GearHardVelocityCap", -9999999, 9999999)
+	readNumber(gearVeloCapIncrementBox, "GearVeloCapIncrement", -9999999, 9999999)
+	readNumber(gearHookVelocityGainBox, "GearHookVelocityGain", -9999999, 9999999)
+	readNumber(gearPassiveVelocityGainBox, "GearPassiveVelocityGain", -9999999, 9999999)
+	readNumber(gearVeloGainIncrementBox, "GearVeloGainIncrement", -9999999, 9999999)
+	readNumber(gearOnBoostMomentumMultiplierBox, "GearOnBoostMomentumMultiplier", -9999999, 9999999)
+	readNumber(gearYankSpeedBoostBox, "GearYankSpeedBoost", -9999999, 9999999)
+	readNumber(gearYankBoostDecayStartBox, "GearYankBoostDecayStart", -9999999, 9999999)
+	readNumber(gearYankBoostDecayRateBox, "GearYankBoostDecayRate", -9999999, 9999999)
+	readNumber(gearYankBoostFloorBox, "GearYankBoostFloor", -9999999, 9999999)
+	readNumber(gearBeingYankedPenaltyBox, "GearBeingYankedPenalty", -9999999, 9999999)
+	readNumber(gearYankStrengthBonusPerPointBox, "GearYankStrengthBonusPerPoint", -9999999, 9999999)
+	readNumber(gearVelocityBaseBox, "GearVelocityBase", -9999999, 9999999)
+	readNumber(gearReelSpeedBox, "GearReelSpeed", -9999999, 9999999)
+	readNumber(gearBoostSpeedBox, "GearBoostSpeed", -9999999, 9999999)
+	readNumber(gearBaseGasDurationBox, "GearBaseGasDuration", -9999999, 9999999)
+	readNumber(gearBoostDrainMultiplierBox, "GearBoostDrainMultiplier", -9999999, 9999999)
+	readNumber(gearReelDrainMultiplierBox, "GearReelDrainMultiplier", -9999999, 9999999)
+	readNumber(gearGasDurationIncrementBox, "GearGasDurationIncrement", -9999999, 9999999)
+	readNumber(gearMaxForceXBox, "GearMaxForceX", -999999999, 999999999)
+	readNumber(gearMaxForceYBox, "GearMaxForceY", -999999999, 999999999)
+	readNumber(gearMaxForceZBox, "GearMaxForceZ", -999999999, 999999999)
+	readNumber(gearMaxTorqueXBox, "GearMaxTorqueX", -999999999, 999999999)
+	readNumber(gearMaxTorqueYBox, "GearMaxTorqueY", -999999999, 999999999)
+	readNumber(gearMaxTorqueZBox, "GearMaxTorqueZ", -999999999, 999999999)
+
+	applyGearMods()
+	refreshUI()
+end
+
+local function applyStatBoxes()
+	readNumber(rallyStrengthBox, "RallyBuffStrength", -9999999, 9999999)
+	readNumber(rallyAccelerationBox, "RallyBuffAcceleration", -9999999, 9999999)
+	readNumber(rallyPreservationBox, "RallyBuffPreservation", -9999999, 9999999)
+	readNumber(leadingStrengthBox, "LeadingChargeBuffStrength", -9999999, 9999999)
+	readNumber(leadingAccelerationBox, "LeadingChargeBuffAcceleration", -9999999, 9999999)
+	readNumber(leadingPreservationBox, "LeadingChargeBuffPreservation", -9999999, 9999999)
+	readNumber(dontGiveUpStrengthBox, "DontGiveUpBuffStrength", -9999999, 9999999)
+	readNumber(dontGiveUpAccelerationBox, "DontGiveUpBuffAcceleration", -9999999, 9999999)
+	readNumber(dontGiveUpPreservationBox, "DontGiveUpBuffPreservation", -9999999, 9999999)
+
+	if player.Character then
+		applyStatBuffsToCharacter(player.Character)
+	end
+
+	refreshUI()
+end
+
+local function applyCombatBoxes()
+	readNumber(fistsDamageBox, "FistsDamage", -9999999, 9999999)
+	readNumber(fistsStunBox, "FistsStun", -9999999, 9999999)
+	readNumber(fistsHitboxXBox, "FistsHitboxX", -9999999, 9999999)
+	readNumber(fistsHitboxYBox, "FistsHitboxY", -9999999, 9999999)
+	readNumber(fistsHitboxZBox, "FistsHitboxZ", -9999999, 9999999)
+	readNumber(fistsOffsetZBox, "FistsOffsetZ", -9999999, 9999999)
+
+	readNumber(bladesDamageBox, "BladesDamage", -9999999, 9999999)
+	readNumber(bladesStunBox, "BladesStun", -9999999, 9999999)
+	readNumber(bladesHitboxXBox, "BladesHitboxX", -9999999, 9999999)
+	readNumber(bladesHitboxYBox, "BladesHitboxY", -9999999, 9999999)
+	readNumber(bladesHitboxZBox, "BladesHitboxZ", -9999999, 9999999)
+	readNumber(bladesOffsetZBox, "BladesOffsetZ", -9999999, 9999999)
+
+	readNumber(sabreDamageBox, "SabreDamage", -9999999, 9999999)
+	readNumber(sabreStunBox, "SabreStun", -9999999, 9999999)
+	readNumber(sabreHitboxXBox, "SabreHitboxX", -9999999, 9999999)
+	readNumber(sabreHitboxYBox, "SabreHitboxY", -9999999, 9999999)
+	readNumber(sabreHitboxZBox, "SabreHitboxZ", -9999999, 9999999)
+	readNumber(sabreOffsetZBox, "SabreOffsetZ", -9999999, 9999999)
+
+	applyCombatMods()
+	refreshUI()
+end
+
+local function saveConfig(slotName)
+	SavedConfigs[slotName] = cloneTable(State)
+	notify(slotName .. " saved")
+end
+
+local function loadConfig(slotName)
+	if not SavedConfigs[slotName] then
+		notify(slotName .. " is empty")
+		return
+	end
+
+	copyState(SavedConfigs[slotName])
+	applyAllSystems()
+
+	if State.PlayerESPEnabled then
+		scanESPFolder(PlayerCharactersFolder, "Player")
+	else
+		clearESPType("Player")
+	end
+
+	if State.TitanESPEnabled then
+		scanESPFolder(TitansFolder, "Titan")
+	else
+		clearESPType("Titan")
+	end
+
+	notify(slotName .. " loaded")
+end
+
+local function resetConfig()
+	copyState(DefaultState)
+	applyAllSystems()
+	clearESPType("Player")
+	clearESPType("Titan")
+	notify("Config reset")
+end
+
+napeToggle.MouseButton1Click:Connect(function()
+	State.NapeEnabled = not State.NapeEnabled
+	refreshUI()
+end)
+
+antiGrabToggle.MouseButton1Click:Connect(function()
+	State.AntiGrabEnabled = not State.AntiGrabEnabled
+	refreshUI()
+end)
+
+gearToggle.MouseButton1Click:Connect(function()
+	State.GearEnabled = not State.GearEnabled
+	applyGearMods()
+	refreshUI()
+end)
+
+gasToggle.MouseButton1Click:Connect(function()
+	State.GasEnabled = not State.GasEnabled
+	applyGearMods()
+	refreshUI()
+end)
+
+statModifierToggle.MouseButton1Click:Connect(function()
+	State.StatModifierEnabled = not State.StatModifierEnabled
+	if player.Character then
+		applyStatBuffsToCharacter(player.Character)
+	end
+	refreshUI()
+end)
+
+fistsToggle.MouseButton1Click:Connect(function()
+	State.FistsEnabled = not State.FistsEnabled
+	applyCombatMods()
+	refreshUI()
+end)
+
+bladesToggle.MouseButton1Click:Connect(function()
+	State.BladesEnabled = not State.BladesEnabled
+	applyCombatMods()
+	refreshUI()
+end)
+
+sabreToggle.MouseButton1Click:Connect(function()
+	State.SabreEnabled = not State.SabreEnabled
+	applyCombatMods()
+	refreshUI()
+end)
+
+playerESPToggle.MouseButton1Click:Connect(function()
+	State.PlayerESPEnabled = not State.PlayerESPEnabled
+	if not State.PlayerESPEnabled then
+		clearESPType("Player")
+	else
+		scanESPFolder(PlayerCharactersFolder, "Player")
+	end
+	refreshUI()
+end)
+
+titanESPToggle.MouseButton1Click:Connect(function()
+	State.TitanESPEnabled = not State.TitanESPEnabled
+	if not State.TitanESPEnabled then
+		clearESPType("Titan")
+	else
+		scanESPFolder(TitansFolder, "Titan")
+	end
+	refreshUI()
+end)
+
+tpMultiplierToggle.MouseButton1Click:Connect(function()
+	State.TPMultiplierEnabled = not State.TPMultiplierEnabled
+	applyTPMultiplier()
+	refreshUI()
+end)
+
+injuryNullToggle.MouseButton1Click:Connect(function()
+	State.InjuryNullEnabled = not State.InjuryNullEnabled
+	applyInjuryNull()
+	refreshUI()
+end)
+
+save1.MouseButton1Click:Connect(function() saveConfig("Slot1") end)
+load1.MouseButton1Click:Connect(function() loadConfig("Slot1") end)
+save2.MouseButton1Click:Connect(function() saveConfig("Slot2") end)
+load2.MouseButton1Click:Connect(function() loadConfig("Slot2") end)
+save3.MouseButton1Click:Connect(function() saveConfig("Slot3") end)
+load3.MouseButton1Click:Connect(function() loadConfig("Slot3") end)
+
+resetConfigButton.MouseButton1Click:Connect(function()
+	resetConfig()
+end)
+
+centerUIBtn.MouseButton1Click:Connect(function()
+	main.Position = UDim2.new(0.5, -430, 0.5, -280)
+	notify("UI centered")
+end)
+
+napeSizeBox.FocusLost:Connect(applyNapeValues)
+napeTransparencyBox.FocusLost:Connect(applyNapeValues)
+
+for _, box in ipairs({
+	generation1GasBox,
+	generation2GasBox,
+	gearBladesBox,
+	gearDurabilityBox,
+	gearHookRangeBox,
+	gearHookRangeIncrementBox,
+	gearVelocityCapBox,
+	gearHardVelocityCapBox,
+	gearVeloCapIncrementBox,
+	gearHookVelocityGainBox,
+	gearPassiveVelocityGainBox,
+	gearVeloGainIncrementBox,
+	gearOnBoostMomentumMultiplierBox,
+	gearYankSpeedBoostBox,
+	gearYankBoostDecayStartBox,
+	gearYankBoostDecayRateBox,
+	gearYankBoostFloorBox,
+	gearBeingYankedPenaltyBox,
+	gearYankStrengthBonusPerPointBox,
+	gearVelocityBaseBox,
+	gearReelSpeedBox,
+	gearBoostSpeedBox,
+	gearBaseGasDurationBox,
+	gearBoostDrainMultiplierBox,
+	gearReelDrainMultiplierBox,
+	gearGasDurationIncrementBox,
+	gearMaxForceXBox,
+	gearMaxForceYBox,
+	gearMaxForceZBox,
+	gearMaxTorqueXBox,
+	gearMaxTorqueYBox,
+	gearMaxTorqueZBox,
+}) do
+	box.FocusLost:Connect(applyGearBoxes)
+end
+
+for _, box in ipairs({
+	rallyStrengthBox,
+	rallyAccelerationBox,
+	rallyPreservationBox,
+	leadingStrengthBox,
+	leadingAccelerationBox,
+	leadingPreservationBox,
+	dontGiveUpStrengthBox,
+	dontGiveUpAccelerationBox,
+	dontGiveUpPreservationBox,
+}) do
+	box.FocusLost:Connect(applyStatBoxes)
+end
+
+for _, box in ipairs({
+	fistsDamageBox,
+	fistsStunBox,
+	fistsHitboxXBox,
+	fistsHitboxYBox,
+	fistsHitboxZBox,
+	fistsOffsetZBox,
+	bladesDamageBox,
+	bladesStunBox,
+	bladesHitboxXBox,
+	bladesHitboxYBox,
+	bladesHitboxZBox,
+	bladesOffsetZBox,
+	sabreDamageBox,
+	sabreStunBox,
+	sabreHitboxXBox,
+	sabreHitboxYBox,
+	sabreHitboxZBox,
+	sabreOffsetZBox,
+}) do
+	box.FocusLost:Connect(applyCombatBoxes)
+end
+
+local minimized = false
+local fullSize = main.Size
+
+hideButton.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	sidebar.Visible = not minimized
+	contentHolder.Visible = not minimized
+	notificationHolder.Visible = not minimized
+	main.Size = minimized and UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, 46) or fullSize
+	hideButton.Text = minimized and "+" or "—"
+end)
+
+local dragging = false
+local dragStart
+local startPos
+
+topBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		main.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+	if UserInputService:GetFocusedTextBox() then
+		return
+	end
+
+	if input.KeyCode == Enum.KeyCode.RightShift then
+		gui.Enabled = not gui.Enabled
+	elseif input.KeyCode == Enum.KeyCode.L then
+		State.PlayerESPEnabled = not State.PlayerESPEnabled
+		if not State.PlayerESPEnabled then
+			clearESPType("Player")
+			notify("Player ESP disabled")
+		else
+			scanESPFolder(PlayerCharactersFolder, "Player")
+			notify("Player ESP enabled")
+		end
+		refreshUI()
+	elseif input.KeyCode == Enum.KeyCode.K then
+		State.TitanESPEnabled = not State.TitanESPEnabled
+		if not State.TitanESPEnabled then
+			clearESPType("Titan")
+			notify("Titan ESP disabled")
+		else
+			scanESPFolder(TitansFolder, "Titan")
+			notify("Titan ESP enabled")
+		end
+		refreshUI()
+	end
+end)
+
+player.CharacterAdded:Connect(function(character)
+	task.wait(1)
+	applyStatBuffsToCharacter(character)
+	applyGearMods()
+	applyCombatMods()
+	applyTPMultiplier()
+	applyInjuryNull()
+	updateESP(true)
+end)
+
+RunService.RenderStepped:Connect(function()
+	for _, titan in ipairs(workspace:GetChildren()) do
+		local napeHB = titan:FindFirstChild("NapeHB", true)
+
+		if napeHB and napeHB:IsA("BasePart") then
+			rememberPart(napeHB)
+
+			if State.NapeEnabled then
+				napeHB.Size = Vector3.new(State.NapeSize, State.NapeSize, State.NapeSize)
+				napeHB.Transparency = State.NapeTransparency
+				napeHB.Color = Color3.fromRGB(255, 0, 0)
+				napeHB.CanCollide = false
+			else
+				restorePart(napeHB)
+			end
+		end
+
+		local hitboxes = titan:FindFirstChild("Hitboxes")
+		if hitboxes then
+			local grabBox = hitboxes:FindFirstChild("NapeSwingBox")
+
+			if grabBox and grabBox:IsA("BasePart") then
+				rememberPart(grabBox)
+
+				if State.AntiGrabEnabled then
+					grabBox.CanTouch = false
+					grabBox.CanQuery = false
+					grabBox.CanCollide = false
+					grabBox.Size = Vector3.new(0.05, 0.05, 0.05)
+					grabBox.Transparency = 1
+				else
+					restorePart(grabBox)
+				end
+			end
+		end
+	end
+
+	if State.GearEnabled or State.GasEnabled then
+		applyGearMods()
+	end
+
+	if State.FistsEnabled or State.BladesEnabled or State.SabreEnabled then
+		applyCombatMods()
+	end
+
+	if State.StatModifierEnabled and player.Character then
+		applyStatBuffsToCharacter(player.Character)
+	end
+
+	if State.TPMultiplierEnabled then
+		applyTPMultiplier()
+	end
+
+	if State.InjuryNullEnabled then
+		applyInjuryNull()
+	end
+
+	updateESP()
+end)
+
+switchPage("Main")
+refreshUI()
+applyGearMods()
+applyCombatMods()
+applyTPMultiplier()
+updateESP(true)
+
+if player.Character then
+	applyStatBuffsToCharacter(player.Character)
+	applyInjuryNull()
+end
+
+notify("Hub loaded")
