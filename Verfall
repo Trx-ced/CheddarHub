@@ -3,6 +3,8 @@ local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
@@ -19,19 +21,21 @@ _G.UI_Config = _G.UI_Config or {
 	CustomStats = {
 		FirearmRange = 500,
 		GasConservation = 0.5,
-		MeleeDamage = 5000,
+		MeleeDamage = 20,
 		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
 		OdmVeloCap = 300,
-		PlayerCritChance = 1000,
+		PlayerCritChance = 100,
 		ReloadSpeed = 1.5,
+		RunSpeed = 5,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
-		TitanCritChance = 2,
+		TitanCritChance = 200,
 		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
 	BandageEnabled = true,
+	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
 	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
@@ -49,6 +53,8 @@ Config.TextureImage = Config.TextureImage or "rbxassetid://0"
 Config.TextureTransparency = Config.TextureTransparency or 0.82
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled or false
+Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
+Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
 
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
@@ -174,26 +180,45 @@ if clientInfo then
 	end
 end
 
-local function bypassBandageCount(character)
+local function applyBandageCount(character)
 	if not character then
 		return
 	end
-	character:SetAttribute("BandageCount", 0)
+	if Config.BandageEnabled then
+		character:SetAttribute("BandageCount", 1)
+	end
 	character:GetAttributeChangedSignal("BandageCount"):Connect(function()
-		if Config.BandageEnabled and character:GetAttribute("BandageCount") > 0 then
-			character:SetAttribute("BandageCount", 0)
+		if Config.BandageEnabled and character:GetAttribute("BandageCount") ~= 1 then
+			character:SetAttribute("BandageCount", 1)
 		end
 	end)
 end
 
 if localPlayer.Character then
-	bypassBandageCount(localPlayer.Character)
+	applyBandageCount(localPlayer.Character)
 end
 
 localPlayer.CharacterAdded:Connect(function(character)
 	task.wait(0.5)
-	bypassBandageCount(character)
+	applyBandageCount(character)
 end)
+
+if not Config.BandageTalentHooked then
+	Config.BandageTalentHooked = true
+	local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+	if clientFramework then
+		local success, frameworkModule = pcall(require, clientFramework)
+		if success and frameworkModule and type(frameworkModule.PlayerHasTalent) == "function" then
+			local oldPlayerHasTalent
+			oldPlayerHasTalent = hookfunction(frameworkModule.PlayerHasTalent, function(player, talentName)
+				if (Config.BandageEnabled or Config.BandageRemovalEnabled) and player == localPlayer and talentName == "Path Of The Saviour" then
+					return true
+				end
+				return oldPlayerHasTalent(player, talentName)
+			end)
+		end
+	end
+end
 
 if not Config.BandageNetworkHooked then
 	Config.BandageNetworkHooked = true
@@ -212,6 +237,61 @@ if not Config.BandageNetworkHooked then
 			end
 		end
 		return oldNameCall(self, ...)
+	end)
+end
+
+if not Config.BandageRemovalHooksActive then
+	Config.BandageRemovalHooksActive = true
+
+	local oldGetRemovalAttribute
+	oldGetRemovalAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
+		if Config.BandageRemovalEnabled then
+			local callingScript = getcallingscript and getcallingscript()
+			local scriptName = callingScript and callingScript.Name or ""
+			if attributeName == "Bandageable" then
+				return true
+			end
+			if attributeName == "BandageCount" then
+				if string.find(scriptName, "Bandage") and not string.find(scriptName, "Removal") then
+					return 0
+				end
+				if string.find(scriptName, "Removal") or string.find(scriptName, "ToolsClient") then
+					return 1
+				end
+			end
+		end
+		return oldGetRemovalAttribute(self, attributeName)
+	end)
+
+	local oldHasTag
+	oldHasTag = hookfunction(CollectionService.HasTag, function(self, instance, tag)
+		if Config.BandageRemovalEnabled and tag == "Reclusive" then
+			return false
+		end
+		return oldHasTag(self, instance, tag)
+	end)
+
+	task.spawn(function()
+		while task.wait(0.2) do
+			if Config.BandageRemovalEnabled then
+				local containers = {
+					localPlayer:FindFirstChildOfClass("Backpack"),
+					localPlayer.Character,
+				}
+				for _, container in ipairs(containers) do
+					if container then
+						local bandage = container:FindFirstChild("Bandage")
+						if bandage and not bandage.Enabled then
+							bandage.Enabled = true
+						end
+						local bandageRemoval = container:FindFirstChild("Bandage Removal")
+						if bandageRemoval and not bandageRemoval.Enabled then
+							bandageRemoval.Enabled = true
+						end
+					end
+				end
+			end
+		end
 	end)
 end
 
@@ -751,7 +831,7 @@ end, function(value)
 	Config.AttributesEnabled = value
 end)
 
-local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * 13)
+local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * 14)
 local stats = {
 	"FirearmRange",
 	"GasConservation",
@@ -761,6 +841,7 @@ local stats = {
 	"OdmVeloCap",
 	"PlayerCritChance",
 	"ReloadSpeed",
+	"RunSpeed",
 	"StrengthMultiplier",
 	"SwingSpeed",
 	"TitanCritChance",
@@ -782,6 +863,9 @@ createToggle(bandageCard, 50, "Enable Bandage Modification", function()
 	return Config.BandageEnabled
 end, function(value)
 	Config.BandageEnabled = value
+	if value and localPlayer.Character then
+		localPlayer.Character:SetAttribute("BandageCount", 1)
+	end
 end)
 createTextBox(bandageCard, 88, "Self Heal Amount", Config.SelfHealAmount, function(text, box)
 	Config.SelfHealAmount = tonumber(text) or Config.SelfHealAmount
@@ -790,6 +874,13 @@ end)
 createTextBox(bandageCard, 126, "Other Heal Amount", Config.OtherHealAmount, function(text, box)
 	Config.OtherHealAmount = tonumber(text) or Config.OtherHealAmount
 	box.Text = tostring(Config.OtherHealAmount)
+end)
+
+local removalCard = createCard(miscPage, "Bandage Removal", 94)
+createToggle(removalCard, 50, "Enable Bandage Removal", function()
+	return Config.BandageRemovalEnabled
+end, function(value)
+	Config.BandageRemovalEnabled = value
 end)
 
 local resourcesCard = createCard(miscPage, "Resources", 94)
