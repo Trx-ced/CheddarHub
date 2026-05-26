@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
@@ -32,6 +33,7 @@ _G.UI_Config = _G.UI_Config or {
 	},
 	BandageEnabled = false,
 	NoFallDamageEnabled = false,
+	VelocityCapperEnabled = false,
 	SelfHealAmount = 100,
 	OtherHealAmount = 150,
 	RefillKey = Enum.KeyCode.U,
@@ -46,6 +48,7 @@ Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
 Config.TextureImage = Config.TextureImage or "rbxassetid://0"
 Config.TextureTransparency = Config.TextureTransparency or 0.82
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
+Config.VelocityCapperEnabled = Config.VelocityCapperEnabled or false
 
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
@@ -251,6 +254,49 @@ if Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
 
+RunService.Heartbeat:Connect(function()
+	if not Config.VelocityCapperEnabled then
+		return
+	end
+
+	local character = localPlayer.Character
+	if not character then
+		return
+	end
+
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart then
+		return
+	end
+
+	local currentMaxCap = tonumber(Config.CustomStats and Config.CustomStats.OdmVeloCap) or 500
+	if currentMaxCap <= 0 then
+		return
+	end
+
+	local realVelocity = rootPart.AssemblyLinearVelocity
+	if realVelocity.Magnitude > currentMaxCap then
+		local clampedReal = realVelocity.Unit * currentMaxCap
+		rootPart.AssemblyLinearVelocity = Vector3.new(clampedReal.X, realVelocity.Y, clampedReal.Z)
+	end
+
+	for _, mover in ipairs(character:GetDescendants()) do
+		if mover:IsA("BodyVelocity") then
+			local targetVelocity = mover.Velocity
+			if targetVelocity.Magnitude > currentMaxCap then
+				local clampedVelocity = targetVelocity.Unit * currentMaxCap
+				mover.Velocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
+			end
+		elseif mover:IsA("LinearVelocity") then
+			local targetVelocity = mover.VectorVelocity
+			if targetVelocity.Magnitude > currentMaxCap then
+				local clampedVelocity = targetVelocity.Unit * currentMaxCap
+				mover.VectorVelocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
+			end
+		end
+	end
+end)
+
 local COLORS = {
 	BG = Color3.fromRGB(7, 10, 14),
 	TOP = Color3.fromRGB(11, 16, 24),
@@ -445,23 +491,6 @@ local container = mk("Frame", {
 	BackgroundTransparency = 1,
 	ZIndex = 3,
 })
-
-local openButton = mk("TextButton", {
-	Name = "OpenButton",
-	Parent = gui,
-	Position = UDim2.new(0, 22, 0.5, -24),
-	Size = UDim2.fromOffset(126, 48),
-	BackgroundColor3 = COLORS.PANEL,
-	BorderSizePixel = 0,
-	Text = "OPEN HUB",
-	TextColor3 = COLORS.TEXT,
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	Visible = false,
-})
-addCorner(openButton, 13)
-addStroke(openButton, COLORS.STROKE, 0)
-addGradient(openButton, COLORS.PANEL2, COLORS.PANEL)
 
 local state = {
 	Open = true,
@@ -780,6 +809,20 @@ end, function(value)
 	end
 end)
 
+local velocityCard = createCard(miscPage, "Velocity Capper", 132)
+createToggle(velocityCard, 50, "Enable Velocity Capper", function()
+	return Config.VelocityCapperEnabled
+end, function(value)
+	Config.VelocityCapperEnabled = value
+end)
+createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCap, function(text, box)
+	local value = tonumber(text)
+	if value and value > 0 then
+		Config.CustomStats.OdmVeloCap = value
+	end
+	box.Text = tostring(Config.CustomStats.OdmVeloCap)
+end)
+
 local interfaceCard = createCard(settingsPage, "Interface", 212)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
 	return Config.ToggleUIKey
@@ -820,7 +863,7 @@ mk("TextLabel", {
 	Position = UDim2.new(0, 18, 0, 48),
 	Size = UDim2.new(1, -36, 0, 30),
 	BackgroundTransparency = 1,
-	Text = "Use the X above to hide the hub. OPEN HUB returns it.",
+	Text = "Use the X above to hide the hub. Use your open / close key to return.",
 	TextColor3 = COLORS.SUB,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.Gotham,
@@ -831,15 +874,10 @@ mk("TextLabel", {
 local function setWindowOpen(open)
 	state.Open = open
 	main.Visible = open
-	openButton.Visible = not open
 end
 
 closeButton.MouseButton1Click:Connect(function()
 	setWindowOpen(false)
-end)
-
-openButton.MouseButton1Click:Connect(function()
-	setWindowOpen(true)
 end)
 
 topBar.InputBegan:Connect(function(input)
