@@ -1,0 +1,900 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+local _G = getgenv and getgenv() or _G
+
+_G.UI_Config = _G.UI_Config or {
+	NapeEnabled = false,
+	NapeSize = Vector3.new(20, 20, 20),
+	NapeOffset = Vector3.new(0, 4, 5),
+	EyeEnabled = false,
+	EyeSize = Vector3.new(5, 5, 5),
+	EyeOffset = Vector3.new(0, 0, 0),
+	NullifyEnabled = false,
+	AttributesEnabled = false,
+	CustomStats = {
+		FirearmRange = 500,
+		GasConservation = 3,
+		MeleeDamage = 5000,
+		OdmHookVeloGain = 2,
+		OdmPassiveVeloGain = 2,
+		OdmVeloCap = 500,
+		PlayerCritChance = 1000,
+		ReloadSpeed = 50,
+		StrengthMultiplier = 10000,
+		SwingSpeed = 5,
+		TitanCritChance = 1000,
+		TitanMultiplier = 10,
+		VelocityScaling = 1,
+	},
+	BandageEnabled = false,
+	NoFallDamageEnabled = false,
+	SelfHealAmount = 100,
+	OtherHealAmount = 150,
+	RefillKey = Enum.KeyCode.U,
+	ToggleUIKey = Enum.KeyCode.RightShift,
+	TextureImage = "rbxassetid://0",
+	TextureTransparency = 0.82,
+}
+
+local Config = _G.UI_Config
+
+Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
+Config.TextureImage = Config.TextureImage or "rbxassetid://0"
+Config.TextureTransparency = Config.TextureTransparency or 0.82
+Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
+
+local function applyTitanExpansion(titanModel)
+	if not titanModel:IsA("Model") then
+		return
+	end
+
+	local damagePoints = titanModel:WaitForChild("DamagePoints", 5)
+	local root = titanModel:WaitForChild("HumanoidRootPart", 5) or titanModel:WaitForChild("Head", 5)
+	if not damagePoints or not root then
+		return
+	end
+
+	local function configurePart(part, size, offset)
+		if not part or not part:IsA("BasePart") then
+			return
+		end
+		for _, obj in ipairs(part:GetDescendants()) do
+			if obj:IsA("JointInstance") or obj:IsA("Weld") then
+				obj:Destroy()
+			end
+		end
+		part.Size = size
+		part.CanCollide = false
+		part.CFrame = root.CFrame * CFrame.new(offset)
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = root
+		weld.Part1 = part
+		weld.Parent = part
+	end
+
+	if Config.NapeEnabled then
+		configurePart(damagePoints:WaitForChild("Nape", 5), Config.NapeSize, Config.NapeOffset)
+	end
+
+	if Config.EyeEnabled then
+		local eyes = damagePoints:FindFirstChild("Eyes") or damagePoints:FindFirstChild("Eye")
+		if eyes then
+			if eyes:IsA("BasePart") then
+				configurePart(eyes, Config.EyeSize, Config.EyeOffset)
+			else
+				for _, eye in ipairs(eyes:GetDescendants()) do
+					if eye:IsA("BasePart") then
+						configurePart(eye, Config.EyeSize, Config.EyeOffset)
+					end
+				end
+			end
+		end
+	end
+end
+
+local function stripPhysics(part)
+	if Config.NullifyEnabled and part:IsA("BasePart") then
+		part.Size = Vector3.new(0, 0, 0)
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+	end
+end
+
+local function monitorFolder(folder)
+	for _, part in ipairs(folder:GetChildren()) do
+		stripPhysics(part)
+	end
+	folder.ChildAdded:Connect(stripPhysics)
+end
+
+local function optimizeTitanNullify(titanModel)
+	if not titanModel:IsA("Model") then
+		return
+	end
+	task.spawn(function()
+		local hitboxes = titanModel:WaitForChild("Hitboxes", 5)
+		if hitboxes then
+			monitorFolder(hitboxes)
+		end
+	end)
+	task.spawn(function()
+		local detectors = titanModel:WaitForChild("Detectors", 5)
+		if detectors then
+			monitorFolder(detectors)
+		end
+	end)
+end
+
+local World = workspace:WaitForChild("World")
+local TitansFolder = World:WaitForChild("Titans")
+
+TitansFolder.ChildAdded:Connect(function(child)
+	if Config.NapeEnabled or Config.EyeEnabled then
+		applyTitanExpansion(child)
+	end
+	if Config.NullifyEnabled then
+		optimizeTitanNullify(child)
+	end
+end)
+
+local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
+if clientInfo then
+	task.spawn(function()
+		while task.wait() do
+			if Config.AttributesEnabled then
+				if not clientInfo.Parent then
+					break
+				end
+				for statName, statValue in pairs(Config.CustomStats) do
+					if clientInfo:GetAttribute(statName) ~= statValue then
+						clientInfo:SetAttribute(statName, statValue)
+					end
+				end
+			end
+		end
+	end)
+
+	if not Config.MasterAttributeHookActive then
+		Config.MasterAttributeHookActive = true
+		local oldGetAttribute
+		oldGetAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
+			if Config.AttributesEnabled and self == clientInfo and Config.CustomStats[attributeName] ~= nil then
+				return Config.CustomStats[attributeName]
+			end
+			return oldGetAttribute(self, attributeName)
+		end)
+	end
+end
+
+local function bypassBandageCount(character)
+	if not character then
+		return
+	end
+	character:SetAttribute("BandageCount", 0)
+	character:GetAttributeChangedSignal("BandageCount"):Connect(function()
+		if Config.BandageEnabled and character:GetAttribute("BandageCount") > 0 then
+			character:SetAttribute("BandageCount", 0)
+		end
+	end)
+end
+
+if localPlayer.Character then
+	bypassBandageCount(localPlayer.Character)
+end
+
+localPlayer.CharacterAdded:Connect(function(character)
+	task.wait(0.5)
+	bypassBandageCount(character)
+end)
+
+if not Config.BandageNetworkHooked then
+	Config.BandageNetworkHooked = true
+	local oldNameCall
+	oldNameCall = hookmetamethod(game, "__namecall", function(self, ...)
+		local method = getnamecallmethod()
+		local args = { ... }
+		if Config.BandageEnabled and (method == "FireServer" or method == "InvokeServer") and self.Name == "Bandage" then
+			if args[1] == "SelfHeal" and type(args[3]) == "number" then
+				args[3] = Config.SelfHealAmount
+				return self[method](self, unpack(args))
+			end
+			if args[1] == "HealOther" and type(args[3]) == "number" then
+				args[3] = Config.OtherHealAmount
+				return self[method](self, unpack(args))
+			end
+		end
+		return oldNameCall(self, ...)
+	end)
+end
+
+local function instantRefillAll()
+	for _, obj in pairs(getgc(true)) do
+		if type(obj) == "table" then
+			if obj.MaxGas and rawget(obj, "Gas") then
+				obj.Gas = obj.MaxGas
+				if type(obj.UpdateGas) == "function" then
+					obj:UpdateGas()
+				end
+			end
+			if obj.MaxDurability and rawget(obj, "Blades") then
+				obj.Blades = obj.MaxBlades or 5
+				obj.Durability = obj.MaxDurability
+				if type(obj.UpdateDurability) == "function" then
+					obj:UpdateDurability()
+				end
+			end
+		end
+	end
+end
+
+local function disableFallDamageLoop()
+	for _, object in pairs(getgc(false)) do
+		if type(object) == "function" then
+			local success, info = pcall(debug.getinfo, object)
+			if success and info and (info.name == "Deconnexions" or (info.source and string.find(info.source, "FallDamage"))) then
+				local bypassed = pcall(object)
+				if bypassed then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+if Config.NoFallDamageEnabled then
+	task.spawn(disableFallDamageLoop)
+end
+
+local COLORS = {
+	BG = Color3.fromRGB(7, 10, 14),
+	TOP = Color3.fromRGB(11, 16, 24),
+	SIDE = Color3.fromRGB(9, 14, 21),
+	PANEL = Color3.fromRGB(14, 20, 30),
+	PANEL2 = Color3.fromRGB(18, 28, 42),
+	INPUT = Color3.fromRGB(9, 15, 24),
+	STROKE = Color3.fromRGB(35, 122, 200),
+	STROKE_SOFT = Color3.fromRGB(24, 82, 140),
+	TEXT = Color3.fromRGB(238, 245, 255),
+	SUB = Color3.fromRGB(155, 186, 220),
+	ON = Color3.fromRGB(31, 121, 201),
+	OFF = Color3.fromRGB(43, 56, 74),
+	ACCENT = Color3.fromRGB(49, 144, 224),
+	TAB = Color3.fromRGB(16, 23, 34),
+	TAB_ACTIVE = Color3.fromRGB(26, 52, 84),
+}
+
+local function mk(className, props)
+	local object = Instance.new(className)
+	for key, value in pairs(props or {}) do
+		object[key] = value
+	end
+	return object
+end
+
+local function addCorner(object, radius)
+	mk("UICorner", {
+		Parent = object,
+		CornerRadius = UDim.new(0, radius),
+	})
+end
+
+local function addStroke(object, color, transparency)
+	mk("UIStroke", {
+		Parent = object,
+		Color = color,
+		Thickness = 1,
+		Transparency = transparency or 0,
+	})
+end
+
+local function addGradient(object, firstColor, secondColor)
+	local gradient = mk("UIGradient", {
+		Parent = object,
+		Rotation = 90,
+	})
+	gradient.Color = ColorSequence.new(firstColor, secondColor)
+end
+
+local function keyName(keyCode)
+	return tostring(keyCode):gsub("Enum.KeyCode.", "")
+end
+
+local function parseVector(text, fallback)
+	local parts = string.split(text, ",")
+	if #parts ~= 3 then
+		return fallback
+	end
+	return Vector3.new(tonumber(parts[1]) or fallback.X, tonumber(parts[2]) or fallback.Y, tonumber(parts[3]) or fallback.Z)
+end
+
+local previous = CoreGui:FindFirstChild("ModSystemUI")
+if previous then
+	previous:Destroy()
+end
+
+local gui = mk("ScreenGui", {
+	Name = "ModSystemUI",
+	Parent = CoreGui,
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+local main = mk("Frame", {
+	Name = "MainFrame",
+	Parent = gui,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(900, 570),
+	BackgroundColor3 = COLORS.BG,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+})
+addCorner(main, 18)
+addStroke(main, COLORS.STROKE, 0.05)
+addGradient(main, COLORS.BG, Color3.fromRGB(8, 15, 25))
+
+local texture = mk("ImageLabel", {
+	Name = "TextureOverlay",
+	Parent = main,
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	Image = Config.TextureImage,
+	ImageTransparency = Config.TextureTransparency,
+	ScaleType = Enum.ScaleType.Crop,
+	ZIndex = 1,
+})
+addCorner(texture, 18)
+
+local tint = mk("Frame", {
+	Parent = main,
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = COLORS.BG,
+	BackgroundTransparency = 0.28,
+	BorderSizePixel = 0,
+	ZIndex = 2,
+})
+
+local topBar = mk("Frame", {
+	Name = "TopBar",
+	Parent = main,
+	Size = UDim2.new(1, 0, 0, 60),
+	BackgroundColor3 = COLORS.TOP,
+	BackgroundTransparency = 0.1,
+	BorderSizePixel = 0,
+	ZIndex = 3,
+})
+
+local title = mk("TextLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 24, 0, 10),
+	Size = UDim2.new(1, -100, 0, 22),
+	BackgroundTransparency = 1,
+	Text = "CheddarCheeseHub | Verfall",
+	TextColor3 = COLORS.TEXT,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.GothamBold,
+	TextSize = 20,
+	ZIndex = 4,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 25, 0, 33),
+	Size = UDim2.new(1, -100, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "Best AOT CC Cheating Hub",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	ZIndex = 4,
+})
+
+local closeButton = mk("TextButton", {
+	Name = "Close",
+	Parent = topBar,
+	Position = UDim2.new(1, -48, 0, 14),
+	Size = UDim2.fromOffset(32, 32),
+	BackgroundColor3 = COLORS.PANEL2,
+	BorderSizePixel = 0,
+	Text = "X",
+	TextColor3 = COLORS.TEXT,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	AutoButtonColor = false,
+	ZIndex = 4,
+})
+addCorner(closeButton, 10)
+addStroke(closeButton, COLORS.STROKE_SOFT, 0.1)
+
+local sidebar = mk("Frame", {
+	Name = "Sidebar",
+	Parent = main,
+	Position = UDim2.new(0, 0, 0, 60),
+	Size = UDim2.new(0, 184, 1, -60),
+	BackgroundColor3 = COLORS.SIDE,
+	BackgroundTransparency = 0.12,
+	BorderSizePixel = 0,
+	ZIndex = 3,
+})
+
+mk("TextLabel", {
+	Parent = sidebar,
+	Position = UDim2.new(0, 18, 0, 18),
+	Size = UDim2.new(1, -36, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "Soon",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	ZIndex = 4,
+})
+
+local container = mk("Frame", {
+	Name = "Container",
+	Parent = main,
+	Position = UDim2.new(0, 184, 0, 60),
+	Size = UDim2.new(1, -184, 1, -60),
+	BackgroundTransparency = 1,
+	ZIndex = 3,
+})
+
+local openButton = mk("TextButton", {
+	Name = "OpenButton",
+	Parent = gui,
+	Position = UDim2.new(0, 22, 0.5, -24),
+	Size = UDim2.fromOffset(126, 48),
+	BackgroundColor3 = COLORS.PANEL,
+	BorderSizePixel = 0,
+	Text = "OPEN HUB",
+	TextColor3 = COLORS.TEXT,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Visible = false,
+})
+addCorner(openButton, 13)
+addStroke(openButton, COLORS.STROKE, 0)
+addGradient(openButton, COLORS.PANEL2, COLORS.PANEL)
+
+local state = {
+	Open = true,
+	Page = nil,
+	Capturing = nil,
+	CaptureSetter = nil,
+	CaptureRefresh = nil,
+	Dragging = false,
+	DragStart = nil,
+	StartPosition = nil,
+}
+
+local pages = {}
+local tabs = {}
+
+local function createPage(name)
+	local page = mk("ScrollingFrame", {
+		Name = name .. "Page",
+		Parent = container,
+		Position = UDim2.new(0, 18, 0, 18),
+		Size = UDim2.new(1, -36, 1, -36),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = COLORS.ACCENT,
+		Visible = false,
+		CanvasSize = UDim2.new(),
+		ZIndex = 3,
+	})
+	local layout = mk("UIListLayout", {
+		Parent = page,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
+	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
+	end)
+	pages[name] = page
+	return page
+end
+
+local function switchPage(name)
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == name
+	end
+	for pageName, tab in pairs(tabs) do
+		local active = pageName == name
+		tab.BackgroundColor3 = active and COLORS.TAB_ACTIVE or COLORS.TAB
+		tab.TextColor3 = active and COLORS.TEXT or COLORS.SUB
+	end
+	state.Page = name
+end
+
+local function createTab(name, index)
+	local tab = mk("TextButton", {
+		Parent = sidebar,
+		Position = UDim2.new(0, 12, 0, 52 + (index - 1) * 50),
+		Size = UDim2.new(1, -24, 0, 40),
+		BackgroundColor3 = COLORS.TAB,
+		BorderSizePixel = 0,
+		Text = "  " .. string.upper(name),
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+		ZIndex = 4,
+	})
+	addCorner(tab, 10)
+	tab.MouseButton1Click:Connect(function()
+		switchPage(name)
+	end)
+	tabs[name] = tab
+end
+
+local function createCard(parent, titleText, height)
+	local card = mk("Frame", {
+		Parent = parent,
+		Size = UDim2.new(1, -6, 0, height),
+		BackgroundColor3 = COLORS.PANEL,
+		BackgroundTransparency = 0.08,
+		BorderSizePixel = 0,
+		ZIndex = 4,
+	})
+	addCorner(card, 15)
+	addStroke(card, COLORS.STROKE_SOFT, 0.18)
+	addGradient(card, COLORS.PANEL, COLORS.PANEL2)
+	mk("TextLabel", {
+		Parent = card,
+		Position = UDim2.new(0, 18, 0, 12),
+		Size = UDim2.new(1, -36, 0, 22),
+		BackgroundTransparency = 1,
+		Text = titleText,
+		TextColor3 = COLORS.TEXT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		ZIndex = 5,
+	})
+	return card
+end
+
+local function label(parent, y, text)
+	return mk("TextLabel", {
+		Parent = parent,
+		Position = UDim2.new(0, 18, 0, y),
+		Size = UDim2.new(0.54, 0, 0, 30),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		ZIndex = 5,
+	})
+end
+
+local function createToggle(parent, y, text, getter, setter)
+	label(parent, y, text)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -104, 0, y + 2),
+		Size = UDim2.fromOffset(82, 27),
+		BackgroundColor3 = COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = "",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+		ZIndex = 5,
+	})
+	addCorner(button, 9)
+	local function refresh()
+		local enabled = getter()
+		button.Text = enabled and "ON" or "OFF"
+		TweenService:Create(button, TweenInfo.new(0.14), {
+			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
+		}):Play()
+	end
+	button.MouseButton1Click:Connect(function()
+		setter(not getter())
+		refresh()
+	end)
+	refresh()
+	return refresh
+end
+
+local function createTextBox(parent, y, text, value, callback)
+	label(parent, y, text)
+	local box = mk("TextBox", {
+		Parent = parent,
+		Position = UDim2.new(1, -222, 0, y + 2),
+		Size = UDim2.fromOffset(200, 28),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = tostring(value),
+		TextColor3 = COLORS.TEXT,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 12,
+		ZIndex = 5,
+	})
+	addCorner(box, 9)
+	addStroke(box, COLORS.STROKE_SOFT, 0.18)
+	box.FocusLost:Connect(function()
+		callback(box.Text, box)
+	end)
+	return box
+end
+
+local function createKeybind(parent, y, text, getter, setter)
+	label(parent, y, text)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -184, 0, y + 2),
+		Size = UDim2.fromOffset(162, 28),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = keyName(getter()),
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+		ZIndex = 5,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE_SOFT, 0.18)
+	local function refresh()
+		if state.Capturing == button then
+			button.Text = "PRESS A KEY"
+			button.BackgroundColor3 = COLORS.ON
+		else
+			button.Text = keyName(getter())
+			button.BackgroundColor3 = COLORS.INPUT
+		end
+	end
+	button.MouseButton1Click:Connect(function()
+		state.Capturing = button
+		state.CaptureSetter = setter
+		state.CaptureRefresh = refresh
+		refresh()
+	end)
+	refresh()
+	return refresh
+end
+
+local mainPage = createPage("Main")
+local attrPage = createPage("Attributes")
+local miscPage = createPage("Misc")
+local settingsPage = createPage("Settings")
+
+createTab("Main", 1)
+createTab("Attributes", 2)
+createTab("Misc", 3)
+createTab("Settings", 4)
+
+local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
+createToggle(titanCard, 50, "Enable Nape Extender", function()
+	return Config.NapeEnabled
+end, function(value)
+	Config.NapeEnabled = value
+end)
+createTextBox(titanCard, 88, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
+	Config.NapeSize = parseVector(text, Config.NapeSize)
+	box.Text = string.format("%s,%s,%s", Config.NapeSize.X, Config.NapeSize.Y, Config.NapeSize.Z)
+end)
+createTextBox(titanCard, 126, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
+	Config.NapeOffset = parseVector(text, Config.NapeOffset)
+	box.Text = string.format("%s,%s,%s", Config.NapeOffset.X, Config.NapeOffset.Y, Config.NapeOffset.Z)
+end)
+createToggle(titanCard, 164, "Enable Eye Extender", function()
+	return Config.EyeEnabled
+end, function(value)
+	Config.EyeEnabled = value
+end)
+createTextBox(titanCard, 202, "Eye Size (X,Y,Z)", "5,5,5", function(text, box)
+	Config.EyeSize = parseVector(text, Config.EyeSize)
+	box.Text = string.format("%s,%s,%s", Config.EyeSize.X, Config.EyeSize.Y, Config.EyeSize.Z)
+end)
+
+local physicsCard = createCard(mainPage, "Nullify", 86)
+createToggle(physicsCard, 48, "Nullify Titan Hitboxes", function()
+	return Config.NullifyEnabled
+end, function(value)
+	Config.NullifyEnabled = value
+	if value then
+		for _, titan in ipairs(TitansFolder:GetChildren()) do
+			task.spawn(optimizeTitanNullify, titan)
+		end
+	end
+end)
+
+local attrCard = createCard(attrPage, "Attribute Controls", 92)
+createToggle(attrCard, 50, "Enable Attribute Mods", function()
+	return Config.AttributesEnabled
+end, function(value)
+	Config.AttributesEnabled = value
+end)
+
+local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * 13)
+local stats = {
+	"FirearmRange",
+	"GasConservation",
+	"MeleeDamage",
+	"OdmHookVeloGain",
+	"OdmPassiveVeloGain",
+	"OdmVeloCap",
+	"PlayerCritChance",
+	"ReloadSpeed",
+	"StrengthMultiplier",
+	"SwingSpeed",
+	"TitanCritChance",
+	"TitanMultiplier",
+	"VelocityScaling",
+}
+for index, statName in ipairs(stats) do
+	createTextBox(statCard, 42 + index * 36, statName, Config.CustomStats[statName], function(text, box)
+		local value = tonumber(text)
+		if value then
+			Config.CustomStats[statName] = value
+		end
+		box.Text = tostring(Config.CustomStats[statName])
+	end)
+end
+
+local bandageCard = createCard(miscPage, "Bandage Controls", 166)
+createToggle(bandageCard, 50, "Enable Bandage Modification", function()
+	return Config.BandageEnabled
+end, function(value)
+	Config.BandageEnabled = value
+end)
+createTextBox(bandageCard, 88, "Self Heal Amount", Config.SelfHealAmount, function(text, box)
+	Config.SelfHealAmount = tonumber(text) or Config.SelfHealAmount
+	box.Text = tostring(Config.SelfHealAmount)
+end)
+createTextBox(bandageCard, 126, "Other Heal Amount", Config.OtherHealAmount, function(text, box)
+	Config.OtherHealAmount = tonumber(text) or Config.OtherHealAmount
+	box.Text = tostring(Config.OtherHealAmount)
+end)
+
+local resourcesCard = createCard(miscPage, "Resources", 94)
+local refreshRefillBind = createKeybind(resourcesCard, 50, "Instant Refill Key", function()
+	return Config.RefillKey
+end, function(value)
+	Config.RefillKey = value
+end)
+
+local safetyCard = createCard(miscPage, "Fall Damage", 94)
+createToggle(safetyCard, 50, "Enable No Fall Damage", function()
+	return Config.NoFallDamageEnabled
+end, function(value)
+	Config.NoFallDamageEnabled = value
+	if value then
+		task.spawn(disableFallDamageLoop)
+	end
+end)
+
+local interfaceCard = createCard(settingsPage, "Interface", 212)
+local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
+	return Config.ToggleUIKey
+end, function(value)
+	Config.ToggleUIKey = value
+end)
+createTextBox(interfaceCard, 88, "Texture Asset ID", Config.TextureImage, function(text, box)
+	local image = text
+	if tonumber(text) then
+		image = "rbxassetid://" .. text
+	end
+	Config.TextureImage = image
+	texture.Image = image
+	box.Text = image
+end)
+createTextBox(interfaceCard, 126, "Texture Transparency (0-1)", Config.TextureTransparency, function(text, box)
+	Config.TextureTransparency = math.clamp(tonumber(text) or Config.TextureTransparency, 0, 1)
+	texture.ImageTransparency = Config.TextureTransparency
+	box.Text = tostring(Config.TextureTransparency)
+end)
+
+mk("TextLabel", {
+	Parent = interfaceCard,
+	Position = UDim2.new(0, 18, 0, 169),
+	Size = UDim2.new(1, -36, 0, 30),
+	BackgroundTransparency = 1,
+	Text = "Upload your texture to Roblox, then paste its asset ID above.",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	ZIndex = 5,
+})
+
+local buttonsCard = createCard(settingsPage, "Window Controls", 96)
+mk("TextLabel", {
+	Parent = buttonsCard,
+	Position = UDim2.new(0, 18, 0, 48),
+	Size = UDim2.new(1, -36, 0, 30),
+	BackgroundTransparency = 1,
+	Text = "Use the X above to hide the hub. OPEN HUB returns it.",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	ZIndex = 5,
+})
+
+local function setWindowOpen(open)
+	state.Open = open
+	main.Visible = open
+	openButton.Visible = not open
+end
+
+closeButton.MouseButton1Click:Connect(function()
+	setWindowOpen(false)
+end)
+
+openButton.MouseButton1Click:Connect(function()
+	setWindowOpen(true)
+end)
+
+topBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		state.Dragging = true
+		state.DragStart = input.Position
+		state.StartPosition = main.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				state.Dragging = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if state.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - state.DragStart
+		main.Position = UDim2.new(
+			state.StartPosition.X.Scale,
+			state.StartPosition.X.Offset + delta.X,
+			state.StartPosition.Y.Scale,
+			state.StartPosition.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if state.Capturing and input.UserInputType == Enum.UserInputType.Keyboard then
+		local setter = state.CaptureSetter
+		local refresh = state.CaptureRefresh
+		state.Capturing = nil
+		state.CaptureSetter = nil
+		state.CaptureRefresh = nil
+		if setter then
+			setter(input.KeyCode)
+		end
+		if refresh then
+			refresh()
+		end
+		refreshToggleBind()
+		refreshRefillBind()
+		return
+	end
+
+	if gameProcessed or input.UserInputType ~= Enum.UserInputType.Keyboard then
+		return
+	end
+
+	if input.KeyCode == Config.ToggleUIKey then
+		setWindowOpen(not state.Open)
+	elseif input.KeyCode == Config.RefillKey then
+		instantRefillAll()
+	end
+end)
+
+switchPage("Main")
+setWindowOpen(true)
