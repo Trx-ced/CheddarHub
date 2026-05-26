@@ -22,20 +22,20 @@ _G.UI_Config = _G.UI_Config or {
 		MeleeDamage = 5000,
 		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
-		OdmVeloCap = 500,
+		OdmVeloCap = 300,
 		PlayerCritChance = 1000,
 		ReloadSpeed = 1.5,
-		StrengthMultiplier = 10000,
+		StrengthMultiplier = 2,
 		SwingSpeed = 5,
-		TitanCritChance = 1000,
+		TitanCritChance = 2,
 		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
 	BandageEnabled = true,
-	NoFallDamageEnabled = false,
-	VelocityCapperEnabled = false,
+	NoFallDamageEnabled = true,
+	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
-	OtherHealAmount = 150,
+	OtherHealAmount = 25,
 	RefillKey = Enum.KeyCode.U,
 	ToggleUIKey = Enum.KeyCode.RightShift,
 	TextureImage = "rbxassetid://0",
@@ -269,7 +269,7 @@ RunService.Heartbeat:Connect(function()
 		return
 	end
 
-	local currentMaxCap = tonumber(Config.CustomStats and Config.CustomStats.OdmVeloCap) or 500
+	local currentMaxCap = tonumber(Config.CustomStats and Config.CustomStats.OdmVeloCap) or 300
 	if currentMaxCap <= 0 then
 		return
 	end
@@ -727,7 +727,7 @@ createToggle(titanCard, 164, "Enable Eye Extender", function()
 end, function(value)
 	Config.EyeEnabled = value
 end)
-createTextBox(titanCard, 202, "Eye Size (X,Y,Z)", "5,5,5", function(text, box)
+createTextBox(titanCard, 202, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
 	Config.EyeSize = parseVector(text, Config.EyeSize)
 	box.Text = string.format("%s,%s,%s", Config.EyeSize.X, Config.EyeSize.Y, Config.EyeSize.Z)
 end)
