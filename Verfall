@@ -5,7 +5,6 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
-local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
@@ -31,7 +30,7 @@ _G.UI_Config = _G.UI_Config or {
 		RunSpeed = 7,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
-		TitanCritChance = 200
+		TitanCritChance = 2,
 		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
@@ -46,7 +45,7 @@ _G.UI_Config = _G.UI_Config or {
 	TextureImage = "rbxassetid://0",
 	TextureTransparency = 0.82,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 2,
+	DamageMultiplier = 9999,
 	NoRecoilEnabled = true,
 	AimAssistEnabled = true,
 	FOVEnabled = true,
@@ -221,23 +220,35 @@ localPlayer.CharacterAdded:Connect(function(character)
 end)
 
 if not Config.BandageTalentHooked then
-	Config.BandageTalentHooked = true
-	local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
-	if clientFramework then
-		local success, frameworkModule = pcall(require, clientFramework)
-		if success and frameworkModule and type(frameworkModule.PlayerHasTalent) == "function" then
-			local oldPlayerHasTalent = frameworkModule.PlayerHasTalent
-			frameworkModule.PlayerHasTalent = function(player, talentName, ...)
-				if Config.BandageEnabled and player == localPlayer and talentName == "Path of The Savior" then
-					return true
+	task.spawn(function()
+		local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+		if clientFramework then
+			local success, frameworkModule = pcall(require, clientFramework)
+			if success and frameworkModule and type(frameworkModule.PlayerHasTalent) == "function" then
+				local oldPlayerHasTalent = frameworkModule.PlayerHasTalent
+				local function replacement(player, talentName, ...)
+					if Config.BandageEnabled and player == localPlayer and talentName == "Path of The Savior" then
+						return true
+					end
+					if Config.BandageRemovalEnabled and player == localPlayer and talentName == "Path Of The Saviour" then
+						return true
+					end
+					return oldPlayerHasTalent(player, talentName, ...)
 				end
-				if Config.BandageRemovalEnabled and player == localPlayer and talentName == "Path Of The Saviour" then
-					return true
+				local assigned = pcall(function()
+					frameworkModule.PlayerHasTalent = replacement
+				end)
+				if not assigned and hookfunction then
+					assigned = pcall(function()
+						hookfunction(frameworkModule.PlayerHasTalent, replacement)
+					end)
 				end
-				return oldPlayerHasTalent(player, talentName, ...)
+				if assigned then
+					Config.BandageTalentHooked = true
+				end
 			end
 		end
-	end
+	end)
 end
 
 if not Config.BandageNetworkHooked then
@@ -261,58 +272,61 @@ if not Config.BandageNetworkHooked then
 end
 
 if not Config.BandageRemovalHooksActive then
-	Config.BandageRemovalHooksActive = true
-
-	local oldGetRemovalAttribute
-	oldGetRemovalAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
-		if Config.BandageRemovalEnabled then
-			local callingScript = getcallingscript and getcallingscript()
-			local scriptName = callingScript and callingScript.Name or ""
-			if attributeName == "Bandageable" then
-				return true
-			end
-			if attributeName == "BandageCount" then
-				if string.find(scriptName, "Bandage") and not string.find(scriptName, "Removal") then
-					return 0
-				end
-				if string.find(scriptName, "Removal") or string.find(scriptName, "ToolsClient") then
-					return 1
-				end
-			end
-		end
-		return oldGetRemovalAttribute(self, attributeName)
-	end)
-
-	local oldHasTag
-	oldHasTag = hookfunction(CollectionService.HasTag, function(self, instance, tag)
-		if Config.BandageRemovalEnabled and tag == "Reclusive" then
-			return false
-		end
-		return oldHasTag(self, instance, tag)
-	end)
-
-	task.spawn(function()
-		while task.wait(0.2) do
+	local installed = pcall(function()
+		local oldGetRemovalAttribute
+		oldGetRemovalAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
 			if Config.BandageRemovalEnabled then
-				local containers = {
-					localPlayer:FindFirstChildOfClass("Backpack"),
-					localPlayer.Character,
-				}
-				for _, container in ipairs(containers) do
-					if container then
-						local bandage = container:FindFirstChild("Bandage")
-						if bandage and not bandage.Enabled then
-							bandage.Enabled = true
-						end
-						local bandageRemoval = container:FindFirstChild("Bandage Removal")
-						if bandageRemoval and not bandageRemoval.Enabled then
-							bandageRemoval.Enabled = true
+				local callingScript = getcallingscript and getcallingscript()
+				local scriptName = callingScript and callingScript.Name or ""
+				if attributeName == "Bandageable" then
+					return true
+				end
+				if attributeName == "BandageCount" then
+					if string.find(scriptName, "Bandage") and not string.find(scriptName, "Removal") then
+						return 0
+					end
+					if string.find(scriptName, "Removal") or string.find(scriptName, "ToolsClient") then
+						return 1
+					end
+				end
+			end
+			return oldGetRemovalAttribute(self, attributeName)
+		end)
+
+		local oldHasTag
+		oldHasTag = hookfunction(CollectionService.HasTag, function(self, instance, tag)
+			if Config.BandageRemovalEnabled and tag == "Reclusive" then
+				return false
+			end
+			return oldHasTag(self, instance, tag)
+		end)
+
+		task.spawn(function()
+			while task.wait(0.2) do
+				if Config.BandageRemovalEnabled then
+					local containers = {
+						localPlayer:FindFirstChildOfClass("Backpack"),
+						localPlayer.Character,
+					}
+					for _, container in ipairs(containers) do
+						if container then
+							local bandage = container:FindFirstChild("Bandage")
+							if bandage and not bandage.Enabled then
+								bandage.Enabled = true
+							end
+							local bandageRemoval = container:FindFirstChild("Bandage Removal")
+							if bandageRemoval and not bandageRemoval.Enabled then
+								bandageRemoval.Enabled = true
+							end
 						end
 					end
 				end
 			end
-		end
+		end)
 	end)
+	if installed then
+		Config.BandageRemovalHooksActive = true
+	end
 end
 
 local function instantRefillAll()
@@ -397,74 +411,83 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
-if not Config.GunFrameworkModified then
-	Config.GunFrameworkModified = true
-	local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
-	if clientFramework then
-		local classes = clientFramework:WaitForChild("Classes", 5)
-		local gunClassFile = classes and classes:FindFirstChild("GunClass")
-		if gunClassFile then
-			local success, gunClass = pcall(require, gunClassFile)
-			if success and gunClass then
-				if type(gunClass.RegisterHit) == "function" then
-					local originalRegisterHit = gunClass.RegisterHit
-					gunClass.RegisterHit = function(self, raycastResult, targetHumanoid, ...)
-						local originalDamage = self.Damage
-						local originalHeadDamage = self.HeadDamage
-						if Config.DamageMultiplierEnabled then
-							if type(originalDamage) == "number" then
-								self.Damage = originalDamage * Config.DamageMultiplier
-							end
-							if type(originalHeadDamage) == "number" then
-								self.HeadDamage = originalHeadDamage * Config.DamageMultiplier
+do
+task.spawn(function()
+	if not Config.GunFrameworkModified then
+		local installed = pcall(function()
+			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+			if clientFramework then
+				local classes = clientFramework:WaitForChild("Classes", 5)
+				local gunClassFile = classes and classes:FindFirstChild("GunClass")
+				if gunClassFile then
+					local success, gunClass = pcall(require, gunClassFile)
+					if success and gunClass then
+						if type(gunClass.RegisterHit) == "function" then
+							local originalRegisterHit = gunClass.RegisterHit
+							gunClass.RegisterHit = function(self, raycastResult, targetHumanoid, ...)
+								local originalDamage = self.Damage
+								local originalHeadDamage = self.HeadDamage
+								if Config.DamageMultiplierEnabled then
+									if type(originalDamage) == "number" then
+										self.Damage = originalDamage * Config.DamageMultiplier
+									end
+									if type(originalHeadDamage) == "number" then
+										self.HeadDamage = originalHeadDamage * Config.DamageMultiplier
+									end
+								end
+								local results = table.pack(pcall(originalRegisterHit, self, raycastResult, targetHumanoid, ...))
+								self.Damage = originalDamage
+								self.HeadDamage = originalHeadDamage
+								if not results[1] then
+									error(results[2])
+								end
+								return unpack(results, 2, results.n)
 							end
 						end
-						local results = table.pack(pcall(originalRegisterHit, self, raycastResult, targetHumanoid, ...))
-						self.Damage = originalDamage
-						self.HeadDamage = originalHeadDamage
-						if not results[1] then
-							error(results[2])
+						if type(gunClass.RecoilFunction) == "function" then
+							local originalRecoil = gunClass.RecoilFunction
+							gunClass.RecoilFunction = function(self, ...)
+								if Config.NoRecoilEnabled then
+									if self.Connections and self.Connections.Recoil then
+										self.Connections.Recoil:Disconnect()
+										self.Connections.Recoil = nil
+									end
+									if self.RecoilSpring then
+										self.RecoilSpring:Reset()
+									end
+									if self.RecoilVignette then
+										self.RecoilVignette.ImageTransparency = 1
+									end
+									local lightingBlur = game.Lighting:FindFirstChildOfClass("BlurEffect")
+									if lightingBlur then
+										lightingBlur.Size = 0
+									end
+									return
+								end
+								return originalRecoil(self, ...)
+							end
 						end
-						return unpack(results, 2, results.n)
-					end
-				end
-				if type(gunClass.RecoilFunction) == "function" then
-					local originalRecoil = gunClass.RecoilFunction
-					gunClass.RecoilFunction = function(self, ...)
-						if Config.NoRecoilEnabled then
-							if self.Connections and self.Connections.Recoil then
-								self.Connections.Recoil:Disconnect()
-								self.Connections.Recoil = nil
-							end
-							if self.RecoilSpring then
-								self.RecoilSpring:Reset()
-							end
-							if self.RecoilVignette then
-								self.RecoilVignette.ImageTransparency = 1
-							end
-							local lightingBlur = game.Lighting:FindFirstChildOfClass("BlurEffect")
-							if lightingBlur then
-								lightingBlur.Size = 0
-							end
-							return
-						end
-						return originalRecoil(self, ...)
 					end
 				end
 			end
+		end)
+		if installed then
+			Config.GunFrameworkModified = true
 		end
 	end
-end
+end)
 
 local fovCircle
-if Drawing and Drawing.new then
-	fovCircle = Drawing.new("Circle")
-	fovCircle.Visible = false
-	fovCircle.Color = Color3.fromRGB(255, 0, 0)
-	fovCircle.Thickness = 1.5
-	fovCircle.NumSides = 64
-	fovCircle.Filled = false
-end
+pcall(function()
+	if Drawing and Drawing.new then
+		fovCircle = Drawing.new("Circle")
+		fovCircle.Visible = false
+		fovCircle.Color = Color3.fromRGB(255, 0, 0)
+		fovCircle.Thickness = 1.5
+		fovCircle.NumSides = 64
+		fovCircle.Filled = false
+	end
+end)
 
 RunService.RenderStepped:Connect(function()
 	if not fovCircle then
@@ -485,9 +508,9 @@ local function getClosestPlayerToMouse()
 		return nil
 	end
 	local character = localPlayer.Character
-	local world = Workspace:FindFirstChild("World")
+	local world = workspace:FindFirstChild("World")
 	local charactersFolder = world and world:FindFirstChild("Characters")
-	local camera = Workspace.CurrentCamera
+	local camera = workspace.CurrentCamera
 	if not character or not charactersFolder or not camera then
 		return nil
 	end
@@ -514,25 +537,30 @@ local function getClosestPlayerToMouse()
 end
 
 if not Config.AimAssistHookActive then
-	Config.AimAssistHookActive = true
-	local mouse = localPlayer:GetMouse()
-	local oldIndex
-	oldIndex = hookmetamethod(game, "__index", function(self, key)
-		if Config.AimAssistEnabled and self == mouse and not checkcaller() then
-			if key == "Hit" then
-				local targetPart = getClosestPlayerToMouse()
-				if targetPart then
-					return CFrame.new(targetPart.Position)
-				end
-			elseif key == "Target" then
-				local targetPart = getClosestPlayerToMouse()
-				if targetPart then
-					return targetPart
+	local installed = pcall(function()
+		local mouse = localPlayer:GetMouse()
+		local oldIndex
+		oldIndex = hookmetamethod(game, "__index", function(self, key)
+			if Config.AimAssistEnabled and self == mouse and (not checkcaller or not checkcaller()) then
+				if key == "Hit" then
+					local targetPart = getClosestPlayerToMouse()
+					if targetPart then
+						return CFrame.new(targetPart.Position)
+					end
+				elseif key == "Target" then
+					local targetPart = getClosestPlayerToMouse()
+					if targetPart then
+						return targetPart
+					end
 				end
 			end
-		end
-		return oldIndex(self, key)
+			return oldIndex(self, key)
+		end)
 	end)
+	if installed then
+		Config.AimAssistHookActive = true
+	end
+end
 end
 
 local COLORS = {
@@ -939,7 +967,7 @@ end
 local mainPage = createPage("Main")
 local attrPage = createPage("Attributes")
 local miscPage = createPage("Misc")
-local firearmsPage = createPage("Firearms")
+createPage("Firearms")
 local settingsPage = createPage("Settings")
 
 createTab("Main", 1)
@@ -1074,7 +1102,8 @@ createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCa
 	box.Text = tostring(Config.CustomStats.OdmVeloCap)
 end)
 
-local weaponCard = createCard(firearmsPage, "Weapon Modifications", 170)
+do
+local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 170)
 createToggle(weaponCard, 50, "Enable Dmg mult", function()
 	return Config.DamageMultiplierEnabled
 end, function(value)
@@ -1093,7 +1122,7 @@ end, function(value)
 	Config.NoRecoilEnabled = value
 end)
 
-local aimCard = createCard(firearmsPage, "AimAssist", 246)
+local aimCard = createCard(pages.Firearms, "AimAssist", 246)
 createToggle(aimCard, 50, "Enable AimAssist", function()
 	return Config.AimAssistEnabled
 end, function(value)
@@ -1120,6 +1149,7 @@ createToggle(aimCard, 202, "Hide FOV", function()
 end, function(value)
 	Config.HideFOV = value
 end)
+end
 
 local interfaceCard = createCard(settingsPage, "Interface", 212)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
