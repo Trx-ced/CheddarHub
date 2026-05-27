@@ -5,6 +5,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
+local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
@@ -19,18 +20,18 @@ _G.UI_Config = _G.UI_Config or {
 	NullifyEnabled = true,
 	AttributesEnabled = true,
 	CustomStats = {
-		FirearmRange = 5000,
+		FirearmRange = 500,
 		GasConservation = 0.5,
-		MeleeDamage = 20,
+		MeleeDamage = 5000,
 		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
 		OdmVeloCap = 300,
-		PlayerCritChance = 100,
+		PlayerCritChance = 1000,
 		ReloadSpeed = 1.5,
-		RunSpeed = 5.35,
+		RunSpeed = 7,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
-		TitanCritChance = 200,
+		TitanCritChance = 200
 		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
@@ -39,11 +40,19 @@ _G.UI_Config = _G.UI_Config or {
 	NoFallDamageEnabled = true,
 	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
-	OtherHealAmount = 25,
+	OtherHealAmount = 150,
 	RefillKey = Enum.KeyCode.U,
 	ToggleUIKey = Enum.KeyCode.RightShift,
 	TextureImage = "rbxassetid://0",
 	TextureTransparency = 0.82,
+	DamageMultiplierEnabled = true,
+	DamageMultiplier = 9999,
+	NoRecoilEnabled = true,
+	AimAssistEnabled = true,
+	FOVEnabled = true,
+	FOVRadius = 150,
+	FOVTransparency = 0.5,
+	HideFOV = false,
 }
 
 local Config = _G.UI_Config
@@ -55,6 +64,14 @@ Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled or false
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
+Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled ~= false
+Config.DamageMultiplier = Config.DamageMultiplier or 9999
+Config.NoRecoilEnabled = Config.NoRecoilEnabled ~= false
+Config.AimAssistEnabled = Config.AimAssistEnabled ~= false
+Config.FOVEnabled = Config.FOVEnabled ~= false
+Config.FOVRadius = Config.FOVRadius or 150
+Config.FOVTransparency = Config.FOVTransparency or 0.5
+Config.HideFOV = Config.HideFOV or false
 
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
@@ -180,7 +197,7 @@ if clientInfo then
 	end
 end
 
-local function applyBandageCount(character)
+local function lockBandageCount(character)
 	if not character then
 		return
 	end
@@ -195,12 +212,12 @@ local function applyBandageCount(character)
 end
 
 if localPlayer.Character then
-	applyBandageCount(localPlayer.Character)
+	lockBandageCount(localPlayer.Character)
 end
 
 localPlayer.CharacterAdded:Connect(function(character)
 	task.wait(0.5)
-	applyBandageCount(character)
+	lockBandageCount(character)
 end)
 
 if not Config.BandageTalentHooked then
@@ -209,13 +226,16 @@ if not Config.BandageTalentHooked then
 	if clientFramework then
 		local success, frameworkModule = pcall(require, clientFramework)
 		if success and frameworkModule and type(frameworkModule.PlayerHasTalent) == "function" then
-			local oldPlayerHasTalent
-			oldPlayerHasTalent = hookfunction(frameworkModule.PlayerHasTalent, function(player, talentName)
-				if (Config.BandageEnabled or Config.BandageRemovalEnabled) and player == localPlayer and talentName == "Path Of The Saviour" then
+			local oldPlayerHasTalent = frameworkModule.PlayerHasTalent
+			frameworkModule.PlayerHasTalent = function(player, talentName, ...)
+				if Config.BandageEnabled and player == localPlayer and talentName == "Path of The Savior" then
 					return true
 				end
-				return oldPlayerHasTalent(player, talentName)
-			end)
+				if Config.BandageRemovalEnabled and player == localPlayer and talentName == "Path Of The Saviour" then
+					return true
+				end
+				return oldPlayerHasTalent(player, talentName, ...)
+			end
 		end
 	end
 end
@@ -376,6 +396,144 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 end)
+
+if not Config.GunFrameworkModified then
+	Config.GunFrameworkModified = true
+	local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+	if clientFramework then
+		local classes = clientFramework:WaitForChild("Classes", 5)
+		local gunClassFile = classes and classes:FindFirstChild("GunClass")
+		if gunClassFile then
+			local success, gunClass = pcall(require, gunClassFile)
+			if success and gunClass then
+				if type(gunClass.RegisterHit) == "function" then
+					local originalRegisterHit = gunClass.RegisterHit
+					gunClass.RegisterHit = function(self, raycastResult, targetHumanoid, ...)
+						local originalDamage = self.Damage
+						local originalHeadDamage = self.HeadDamage
+						if Config.DamageMultiplierEnabled then
+							if type(originalDamage) == "number" then
+								self.Damage = originalDamage * Config.DamageMultiplier
+							end
+							if type(originalHeadDamage) == "number" then
+								self.HeadDamage = originalHeadDamage * Config.DamageMultiplier
+							end
+						end
+						local results = table.pack(pcall(originalRegisterHit, self, raycastResult, targetHumanoid, ...))
+						self.Damage = originalDamage
+						self.HeadDamage = originalHeadDamage
+						if not results[1] then
+							error(results[2])
+						end
+						return unpack(results, 2, results.n)
+					end
+				end
+				if type(gunClass.RecoilFunction) == "function" then
+					local originalRecoil = gunClass.RecoilFunction
+					gunClass.RecoilFunction = function(self, ...)
+						if Config.NoRecoilEnabled then
+							if self.Connections and self.Connections.Recoil then
+								self.Connections.Recoil:Disconnect()
+								self.Connections.Recoil = nil
+							end
+							if self.RecoilSpring then
+								self.RecoilSpring:Reset()
+							end
+							if self.RecoilVignette then
+								self.RecoilVignette.ImageTransparency = 1
+							end
+							local lightingBlur = game.Lighting:FindFirstChildOfClass("BlurEffect")
+							if lightingBlur then
+								lightingBlur.Size = 0
+							end
+							return
+						end
+						return originalRecoil(self, ...)
+					end
+				end
+			end
+		end
+	end
+end
+
+local fovCircle
+if Drawing and Drawing.new then
+	fovCircle = Drawing.new("Circle")
+	fovCircle.Visible = false
+	fovCircle.Color = Color3.fromRGB(255, 0, 0)
+	fovCircle.Thickness = 1.5
+	fovCircle.NumSides = 64
+	fovCircle.Filled = false
+end
+
+RunService.RenderStepped:Connect(function()
+	if not fovCircle then
+		return
+	end
+	if Config.AimAssistEnabled and Config.FOVEnabled and not Config.HideFOV then
+		fovCircle.Position = UserInputService:GetMouseLocation()
+		fovCircle.Radius = Config.FOVRadius
+		fovCircle.Transparency = Config.FOVTransparency
+		fovCircle.Visible = true
+	else
+		fovCircle.Visible = false
+	end
+end)
+
+local function getClosestPlayerToMouse()
+	if not Config.AimAssistEnabled then
+		return nil
+	end
+	local character = localPlayer.Character
+	local world = Workspace:FindFirstChild("World")
+	local charactersFolder = world and world:FindFirstChild("Characters")
+	local camera = Workspace.CurrentCamera
+	if not character or not charactersFolder or not camera then
+		return nil
+	end
+	local mouseLocation = UserInputService:GetMouseLocation()
+	local closestPart
+	local shortestDistance = math.huge
+	for _, charModel in ipairs(charactersFolder:GetChildren()) do
+		if charModel:IsA("Model") and charModel ~= character then
+			local humanoid = charModel:FindFirstChildOfClass("Humanoid")
+			local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
+			if targetPart and humanoid and humanoid.Health > 0 then
+				local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+				if onScreen then
+					local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
+					if distance < shortestDistance and (not Config.FOVEnabled or distance <= Config.FOVRadius) then
+						shortestDistance = distance
+						closestPart = targetPart
+					end
+				end
+			end
+		end
+	end
+	return closestPart
+end
+
+if not Config.AimAssistHookActive then
+	Config.AimAssistHookActive = true
+	local mouse = localPlayer:GetMouse()
+	local oldIndex
+	oldIndex = hookmetamethod(game, "__index", function(self, key)
+		if Config.AimAssistEnabled and self == mouse and not checkcaller() then
+			if key == "Hit" then
+				local targetPart = getClosestPlayerToMouse()
+				if targetPart then
+					return CFrame.new(targetPart.Position)
+				end
+			elseif key == "Target" then
+				local targetPart = getClosestPlayerToMouse()
+				if targetPart then
+					return targetPart
+				end
+			end
+		end
+		return oldIndex(self, key)
+	end)
+end
 
 local COLORS = {
 	BG = Color3.fromRGB(7, 10, 14),
@@ -781,12 +939,14 @@ end
 local mainPage = createPage("Main")
 local attrPage = createPage("Attributes")
 local miscPage = createPage("Misc")
+local firearmsPage = createPage("Firearms")
 local settingsPage = createPage("Settings")
 
 createTab("Main", 1)
 createTab("Attributes", 2)
 createTab("Misc", 3)
-createTab("Settings", 4)
+createTab("Firearms", 4)
+createTab("Settings", 5)
 
 local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
@@ -912,6 +1072,53 @@ createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCa
 		Config.CustomStats.OdmVeloCap = value
 	end
 	box.Text = tostring(Config.CustomStats.OdmVeloCap)
+end)
+
+local weaponCard = createCard(firearmsPage, "Weapon Modifications", 170)
+createToggle(weaponCard, 50, "Enable Dmg mult", function()
+	return Config.DamageMultiplierEnabled
+end, function(value)
+	Config.DamageMultiplierEnabled = value
+end)
+createTextBox(weaponCard, 88, "Dmg mult", Config.DamageMultiplier, function(text, box)
+	local value = tonumber(text)
+	if value and value > 0 then
+		Config.DamageMultiplier = value
+	end
+	box.Text = tostring(Config.DamageMultiplier)
+end)
+createToggle(weaponCard, 126, "No Recoil", function()
+	return Config.NoRecoilEnabled
+end, function(value)
+	Config.NoRecoilEnabled = value
+end)
+
+local aimCard = createCard(firearmsPage, "AimAssist", 246)
+createToggle(aimCard, 50, "Enable AimAssist", function()
+	return Config.AimAssistEnabled
+end, function(value)
+	Config.AimAssistEnabled = value
+end)
+createToggle(aimCard, 88, "Enable FOV Size", function()
+	return Config.FOVEnabled
+end, function(value)
+	Config.FOVEnabled = value
+end)
+createTextBox(aimCard, 126, "FOV Size", Config.FOVRadius, function(text, box)
+	local value = tonumber(text)
+	if value and value > 0 then
+		Config.FOVRadius = value
+	end
+	box.Text = tostring(Config.FOVRadius)
+end)
+createTextBox(aimCard, 164, "FOV Transparency", Config.FOVTransparency, function(text, box)
+	Config.FOVTransparency = math.clamp(tonumber(text) or Config.FOVTransparency, 0, 1)
+	box.Text = tostring(Config.FOVTransparency)
+end)
+createToggle(aimCard, 202, "Hide FOV", function()
+	return Config.HideFOV
+end, function(value)
+	Config.HideFOV = value
 end)
 
 local interfaceCard = createCard(settingsPage, "Interface", 212)
