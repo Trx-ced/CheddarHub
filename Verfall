@@ -18,6 +18,7 @@ _G.UI_Config = _G.UI_Config or {
 	EyeOffset = Vector3.new(0, 7, 0),
 	NullifyEnabled = true,
 	AttributesEnabled = true,
+	ODMGAttributesEnabled = false,
 	CustomStats = {
 		FirearmRange = 500,
 		GasConservation = 0.5,
@@ -27,7 +28,7 @@ _G.UI_Config = _G.UI_Config or {
 		OdmVeloCap = 300,
 		PlayerCritChance = 1000,
 		ReloadSpeed = 1.5,
-		RunSpeed = 7,
+		RunSpeed = 1,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
@@ -37,7 +38,7 @@ _G.UI_Config = _G.UI_Config or {
 	BandageEnabled = true,
 	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
-	VelocityCapperEnabled = true,
+	VelocityCapperEnabled = false,
 	SelfHealAmount = 100,
 	OtherHealAmount = 150,
 	RefillKey = Enum.KeyCode.U,
@@ -47,11 +48,26 @@ _G.UI_Config = _G.UI_Config or {
 	DamageMultiplierEnabled = true,
 	DamageMultiplier = 9999,
 	NoRecoilEnabled = true,
-	AimAssistEnabled = false,
+	MeleeHitMultiplierEnabled = true,
+	MeleeHitMultiplier = 3,
+	AimAssistEnabled = true,
 	FOVEnabled = true,
 	FOVRadius = 150,
 	FOVTransparency = 0.5,
 	HideFOV = false,
+	RemoveTraitsEnabled = true,
+	InfHorseStamEnabled = false,
+	MusketBullseyeEnabled = true,
+	MusketBullseyeSize = Vector3.new(25, 25, 25),
+	SpeedTestTime = 16.5,
+	TitanDummyHitboxEnabled = true,
+	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
+	TitanDummyCountdownEnabled = true,
+	TitanDummyStatusEnabled = true,
+	TitanDummyShowEnabled = true,
+	RawBandageEnabled = false,
+	RawBandageHealAmount = 25,
+	RawBandageKey = Enum.KeyCode.V,
 }
 
 local Config = _G.UI_Config
@@ -60,17 +76,51 @@ Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
 Config.TextureImage = Config.TextureImage or "rbxassetid://0"
 Config.TextureTransparency = Config.TextureTransparency or 0.82
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
-Config.VelocityCapperEnabled = Config.VelocityCapperEnabled or false
+Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
+Config.ODMGAttributesEnabled = Config.ODMGAttributesEnabled == true
+if Config.MovementSafeVersion ~= 2 then
+	Config.MovementSafeVersion = 2
+	Config.ODMGAttributesEnabled = false
+	Config.VelocityCapperEnabled = false
+	Config.InfHorseStamEnabled = false
+end
 Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled ~= false
 Config.DamageMultiplier = Config.DamageMultiplier or 9999
 Config.NoRecoilEnabled = Config.NoRecoilEnabled ~= false
+Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled ~= false
+Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 3, 1, 5))
 Config.AimAssistEnabled = Config.AimAssistEnabled ~= false
 Config.FOVEnabled = Config.FOVEnabled ~= false
 Config.FOVRadius = Config.FOVRadius or 150
 Config.FOVTransparency = Config.FOVTransparency or 0.5
 Config.HideFOV = Config.HideFOV or false
+Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled ~= false
+Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
+Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled ~= false
+Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(25, 25, 25)
+Config.SpeedTestTime = tonumber(Config.SpeedTestTime) or 16.5
+Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled ~= false
+Config.TitanDummyHitboxSize = Config.TitanDummyHitboxSize or Vector3.new(18, 18, 18)
+Config.TitanDummyCountdownEnabled = Config.TitanDummyCountdownEnabled ~= false
+Config.TitanDummyStatusEnabled = Config.TitanDummyStatusEnabled ~= false
+Config.TitanDummyShowEnabled = Config.TitanDummyShowEnabled ~= false
+Config.RawBandageEnabled = Config.RawBandageEnabled or false
+Config.RawBandageHealAmount = tonumber(Config.RawBandageHealAmount) or 25
+Config.RawBandageKey = Config.RawBandageKey or Enum.KeyCode.V
+
+local movementAttributes = {
+	OdmHookVeloGain = true,
+	OdmPassiveVeloGain = true,
+	OdmVeloCap = true,
+	RunSpeed = true,
+	VelocityScaling = true,
+}
+
+local function shouldApplyCustomStat(statName)
+	return not movementAttributes[statName] or Config.ODMGAttributesEnabled
+end
 
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
@@ -176,7 +226,7 @@ if clientInfo then
 					break
 				end
 				for statName, statValue in pairs(Config.CustomStats) do
-					if clientInfo:GetAttribute(statName) ~= statValue then
+					if shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
 						clientInfo:SetAttribute(statName, statValue)
 					end
 				end
@@ -188,7 +238,7 @@ if clientInfo then
 		Config.MasterAttributeHookActive = true
 		local oldGetAttribute
 		oldGetAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
-			if Config.AttributesEnabled and self == clientInfo and Config.CustomStats[attributeName] ~= nil then
+			if Config.AttributesEnabled and self == clientInfo and Config.CustomStats[attributeName] ~= nil and shouldApplyCustomStat(attributeName) then
 				return Config.CustomStats[attributeName]
 			end
 			return oldGetAttribute(self, attributeName)
@@ -329,6 +379,411 @@ if not Config.BandageRemovalHooksActive then
 	end
 end
 
+if not Config.TraitManagerHooked then
+	task.spawn(function()
+		local installed = pcall(function()
+			local clientFrameworkFile = ReplicatedStorage:FindFirstChild("ClientFramework")
+			if not clientFrameworkFile then
+				return
+			end
+			local success, clientFramework = pcall(require, clientFrameworkFile)
+			if not success or not clientFramework or type(clientFramework.ClientData) ~= "function" then
+				return
+			end
+			local removeTraits = {
+				"One And Done",
+				"Fragile",
+				"Pacifist",
+				"Reclusive",
+				"Astraphobia",
+				"Meeky",
+				"Fatebound",
+				"Limiter",
+				"Unreliable",
+				"Titanphobia",
+				"Increased Nerves",
+				"Unlucky",
+				"Colorblind",
+				"Sluggish",
+				"Uncoordinated",
+				"Coarse Voice",
+				"Susceptible",
+				"Unfit To Saddle",
+				"Impatient",
+			}
+			if not clientFramework.__original_ClientData then
+				clientFramework.__original_ClientData = clientFramework.ClientData
+			end
+			local previousClientData = clientFramework.ClientData
+			clientFramework.ClientData = function(...)
+				local data = previousClientData(...)
+				if Config.RemoveTraitsEnabled and data and data.Traits then
+					for _, name in ipairs(removeTraits) do
+						data.Traits[name] = nil
+					end
+				end
+				return data
+			end
+		end)
+		if installed then
+			Config.TraitManagerHooked = true
+		end
+	end)
+end
+
+if not Config.HorseStaminaHooked then
+	local tweenHooked = pcall(function()
+		local oldCreate
+		oldCreate = hookmetamethod(TweenService, "__index", function(self, key)
+			if self == TweenService and (key == "Create" or key == "create") then
+				return function(ts, instance, tweenInfo, propertyTable)
+					if Config.InfHorseStamEnabled and instance and instance.Name == "Stamina" and instance.Parent and instance.Parent.Name == "BGStamina" and propertyTable and propertyTable.Size then
+						propertyTable.Size = UDim2.new(1, 0, instance.Size.Y.Scale, 0)
+					end
+					return oldCreate(self, key)(ts, instance, tweenInfo, propertyTable)
+				end
+			end
+			return oldCreate(self, key)
+		end)
+	end)
+
+	task.spawn(function()
+		local success, clientFramework = pcall(function()
+			return require(ReplicatedStorage:WaitForChild("ClientFramework", 5))
+		end)
+		RunService.Heartbeat:Connect(function()
+			if not Config.InfHorseStamEnabled then
+				return
+			end
+			if success and clientFramework and clientFramework.ClientData then
+				local ok, data = pcall(clientFramework.ClientData)
+				if ok and data and data.Horses then
+					data.Horses.Stamina = 9999
+					data.Horses.MaxStamina = 9999
+					data.Horses.Exhausted = false
+				end
+			end
+			local world = workspace:FindFirstChild("World")
+			local horses = world and world:FindFirstChild("Horses")
+			local horse = horses and horses:FindFirstChild(localPlayer.Name .. "_Horse")
+			if horse then
+				horse:SetAttribute("Stamina", 9999)
+				horse:SetAttribute("MaxStamina", 9999)
+				horse:SetAttribute("Exhausted", false)
+				horse:SetAttribute("RegenRate", 9999)
+			end
+		end)
+	end)
+
+	Config.HorseStaminaHooked = tweenHooked
+end
+
+local function runObbyOnce()
+	task.spawn(function()
+		local obbyContainer = workspace:FindFirstChild("TC") or workspace
+		local endPart = obbyContainer:FindFirstChild("ObbyExamEnd")
+		local checkpoints = {}
+		for _, part in ipairs(obbyContainer:GetDescendants()) do
+			if part:IsA("BasePart") and (part.Name:lower():find("checkpoint") or part.Name:lower():find("stage")) then
+				table.insert(checkpoints, part)
+			end
+		end
+		table.sort(checkpoints, function(a, b)
+			local numA = tonumber(a.Name:match("%d+")) or 0
+			local numB = tonumber(b.Name:match("%d+")) or 0
+			if numA ~= numB then
+				return numA < numB
+			end
+			return a.Name < b.Name
+		end)
+		local totalNodes = #checkpoints + 1
+		local calculatedDelay = 28 / math.max(totalNodes, 1)
+		local character = localPlayer.Character
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+		if not rootPart then
+			return
+		end
+		for _, checkpoint in ipairs(checkpoints) do
+			rootPart.CFrame = checkpoint.CFrame + Vector3.new(0, 3, 0)
+			task.wait(calculatedDelay)
+		end
+		if endPart then
+			rootPart.CFrame = endPart.CFrame + Vector3.new(0, 3, 0)
+			task.wait(calculatedDelay)
+			local clientFramework = ReplicatedStorage:WaitForChild("ClientFramework", 5)
+			local network = clientFramework and clientFramework:WaitForChild("Network", 5)
+			local obbyRemote = network and network:WaitForChild("ObbyTest", 5)
+			if obbyRemote then
+				obbyRemote:FireServer("EndTest")
+			end
+		end
+	end)
+end
+
+local function runSpeedTestOnce()
+	task.spawn(function()
+		local container = workspace:FindFirstChild("TC") or workspace
+		local endPart = container:FindFirstChild("SpeedExamEnd")
+		local checkpoints = {}
+		for _, part in ipairs(container:GetDescendants()) do
+			if part:IsA("BasePart") and (part.Name:lower():find("checkpoint") or part.Name:lower():find("gate") or part.Name:lower():find("stage")) then
+				table.insert(checkpoints, part)
+			end
+		end
+		table.sort(checkpoints, function(a, b)
+			local numA = tonumber(a.Name:match("%d+")) or 0
+			local numB = tonumber(b.Name:match("%d+")) or 0
+			if numA ~= numB then
+				return numA < numB
+			end
+			return a.Name < b.Name
+		end)
+		if endPart then
+			table.insert(checkpoints, endPart)
+		end
+		local character = localPlayer.Character
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+		if not rootPart or #checkpoints == 0 then
+			return
+		end
+		local timePerNode = math.max(tonumber(Config.SpeedTestTime) or 16.5, 1) / #checkpoints
+		rootPart.Anchored = true
+		local ok = pcall(function()
+			local tweenInfo = TweenInfo.new(timePerNode, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+			for _, node in ipairs(checkpoints) do
+				local tween = TweenService:Create(rootPart, tweenInfo, {
+					CFrame = node.CFrame + Vector3.new(0, 3, 0),
+				})
+				tween:Play()
+				tween.Completed:Wait()
+			end
+		end)
+		rootPart.Anchored = false
+		if ok then
+			task.wait(0.1)
+			local clientFramework = ReplicatedStorage:WaitForChild("ClientFramework", 5)
+			local network = clientFramework and clientFramework:WaitForChild("Network", 5)
+			local speedRemote = network and network:WaitForChild("SpeedTest", 5)
+			if speedRemote then
+				speedRemote:FireServer("EndTest")
+			end
+		end
+	end)
+end
+
+local musketBullseyeOriginals = {}
+
+local function updateMusketBullseyes()
+	local targetTags = {
+		"BullsEye Horizontal",
+		"BullsEye Vertical",
+		"BullsEye PopUp",
+	}
+	for _, tagName in ipairs(targetTags) do
+		for _, target in ipairs(CollectionService:GetTagged(tagName)) do
+			local bullsEye = target:FindFirstChild("BullsEye")
+			if bullsEye and bullsEye:IsA("BasePart") then
+				if not musketBullseyeOriginals[bullsEye] then
+					musketBullseyeOriginals[bullsEye] = {
+						Size = bullsEye.Size,
+						CanCollide = bullsEye.CanCollide,
+						Transparency = bullsEye.Transparency,
+					}
+				end
+				local highlight = bullsEye:FindFirstChild("MusketBullseyeHighlight")
+				if Config.MusketBullseyeEnabled then
+					if not highlight then
+						highlight = Instance.new("Highlight")
+						highlight.Name = "MusketBullseyeHighlight"
+						highlight.Adornee = bullsEye
+						highlight.FillColor = Color3.fromRGB(255, 0, 0)
+						highlight.FillTransparency = 0.4
+						highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+						highlight.Parent = bullsEye
+					end
+					bullsEye.Size = Config.MusketBullseyeSize
+					bullsEye.CanCollide = false
+					bullsEye.Transparency = 0.7
+				else
+					local original = musketBullseyeOriginals[bullsEye]
+					if original then
+						bullsEye.Size = original.Size
+						bullsEye.CanCollide = original.CanCollide
+						bullsEye.Transparency = original.Transparency
+					end
+					if highlight then
+						highlight:Destroy()
+					end
+				end
+			end
+		end
+	end
+end
+
+task.spawn(function()
+	updateMusketBullseyes()
+	while task.wait(2) do
+		if Config.MusketBullseyeEnabled then
+			updateMusketBullseyes()
+		end
+	end
+end)
+
+local titanDummyOriginals = {}
+local titanDummyConnections = {}
+
+local function getTitanDummyNape(dummy)
+	local nape = dummy:FindFirstChild("Nape") or dummy:FindFirstChild("Head")
+	if nape and nape:IsA("BasePart") then
+		return nape
+	end
+	return nil
+end
+
+local function updateTitanDummyLabel(dummy, label)
+	if not label then
+		return
+	end
+	if Config.TitanDummyStatusEnabled then
+		if dummy:GetAttribute("Hit") == true then
+			label.Text = Config.TitanDummyCountdownEnabled and "DEAD" or "DEAD"
+			label.TextColor3 = Color3.fromRGB(255, 50, 50)
+		else
+			label.Text = "ALIVE"
+			label.TextColor3 = Color3.fromRGB(0, 255, 127)
+		end
+		label.Visible = true
+	else
+		label.Visible = false
+	end
+end
+
+local function ensureTitanDummyUI(nape)
+	local existing = nape:FindFirstChild("TitanStatusUI")
+	if existing and not Config.TitanDummyStatusEnabled then
+		existing:Destroy()
+		return nil
+	end
+	if not Config.TitanDummyStatusEnabled then
+		return nil
+	end
+	local billboard = existing
+	if not billboard then
+		billboard = Instance.new("BillboardGui")
+		billboard.Name = "TitanStatusUI"
+		billboard.Size = UDim2.new(0, 200, 0, 70)
+		billboard.AlwaysOnTop = true
+		billboard.StudsOffset = Vector3.new(0, 4, 0)
+		billboard.Parent = nape
+	end
+	local label = billboard:FindFirstChild("StatusLabel")
+	if not label then
+		label = Instance.new("TextLabel")
+		label.Name = "StatusLabel"
+		label.Size = UDim2.new(1, 0, 1, 0)
+		label.BackgroundTransparency = 1
+		label.TextSize = 24
+		label.Font = Enum.Font.GothamBold
+		label.TextWrapped = true
+		label.TextStrokeTransparency = 0
+		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		label.Parent = billboard
+	end
+	return label
+end
+
+local function applyTitanDummy(dummy)
+	if not dummy or not dummy.Parent then
+		return
+	end
+	local nape = getTitanDummyNape(dummy)
+	if not nape then
+		return
+	end
+	if not titanDummyOriginals[nape] then
+		titanDummyOriginals[nape] = {
+			Size = nape.Size,
+			CanCollide = nape.CanCollide,
+			Transparency = nape.Transparency,
+		}
+	end
+	local highlight = dummy:FindFirstChild("TitanDummyHighlight")
+	if Config.TitanDummyShowEnabled then
+		if not highlight then
+			highlight = Instance.new("Highlight")
+			highlight.Name = "TitanDummyHighlight"
+			highlight.Adornee = dummy
+			highlight.FillColor = Color3.fromRGB(255, 60, 60)
+			highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+			highlight.FillTransparency = 0.5
+			highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			highlight.Parent = dummy
+		end
+	elseif highlight then
+		highlight:Destroy()
+	end
+	if Config.TitanDummyHitboxEnabled then
+		nape.Size = Config.TitanDummyHitboxSize
+		nape.CanCollide = false
+		nape.Transparency = 0.6
+	else
+		local original = titanDummyOriginals[nape]
+		if original then
+			nape.Size = original.Size
+			nape.CanCollide = original.CanCollide
+			nape.Transparency = original.Transparency
+		end
+	end
+	local label = ensureTitanDummyUI(nape)
+	updateTitanDummyLabel(dummy, label)
+	if not titanDummyConnections[dummy] then
+		titanDummyConnections[dummy] = dummy:GetAttributeChangedSignal("Hit"):Connect(function()
+			local activeLabel = ensureTitanDummyUI(nape)
+			if dummy:GetAttribute("Hit") == true and activeLabel and Config.TitanDummyCountdownEnabled then
+				task.spawn(function()
+					for i = 15, 1, -1 do
+						if not activeLabel or not dummy.Parent or not Config.TitanDummyCountdownEnabled or not Config.TitanDummyStatusEnabled then
+							break
+						end
+						activeLabel.Text = "DEAD\n" .. i .. "s"
+						activeLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+						task.wait(1)
+					end
+					if activeLabel and dummy.Parent and Config.TitanDummyStatusEnabled then
+						activeLabel.Text = "ALIVE"
+						activeLabel.TextColor3 = Color3.fromRGB(0, 255, 127)
+					end
+				end)
+			else
+				updateTitanDummyLabel(dummy, activeLabel)
+			end
+		end)
+		dummy.Destroying:Connect(function()
+			if titanDummyConnections[dummy] then
+				titanDummyConnections[dummy]:Disconnect()
+				titanDummyConnections[dummy] = nil
+			end
+		end)
+	end
+end
+
+local function updateTitanDummies()
+	for _, dummy in ipairs(CollectionService:GetTagged("Titan Dummy")) do
+		task.spawn(applyTitanDummy, dummy)
+	end
+end
+
+task.spawn(function()
+	updateTitanDummies()
+	CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
+		task.wait(0.5)
+		applyTitanDummy(dummy)
+	end)
+	while task.wait(2) do
+		updateTitanDummies()
+	end
+end)
+
 local function instantRefillAll()
 	for _, obj in pairs(getgc(true)) do
 		if type(obj) == "table" then
@@ -347,6 +802,18 @@ local function instantRefillAll()
 			end
 		end
 	end
+end
+
+local function fireRawBandageHeal()
+	task.spawn(function()
+		local remoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents", 5)
+		local rawBandageEvent = remoteEvents and remoteEvents:WaitForChild("Bandage", 5)
+		local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+		local humanoid = character and character:WaitForChild("Humanoid", 5)
+		if rawBandageEvent and humanoid then
+			rawBandageEvent:FireServer("SelfHeal", humanoid, Config.RawBandageHealAmount)
+		end
+	end)
 end
 
 local function disableFallDamageLoop()
@@ -389,22 +856,25 @@ RunService.Heartbeat:Connect(function()
 	end
 
 	local realVelocity = rootPart.AssemblyLinearVelocity
-	if realVelocity.Magnitude > currentMaxCap then
-		local clampedReal = realVelocity.Unit * currentMaxCap
+	local horizontalVelocity = Vector3.new(realVelocity.X, 0, realVelocity.Z)
+	if horizontalVelocity.Magnitude > currentMaxCap then
+		local clampedReal = horizontalVelocity.Unit * currentMaxCap
 		rootPart.AssemblyLinearVelocity = Vector3.new(clampedReal.X, realVelocity.Y, clampedReal.Z)
 	end
 
 	for _, mover in ipairs(character:GetDescendants()) do
 		if mover:IsA("BodyVelocity") then
 			local targetVelocity = mover.Velocity
-			if targetVelocity.Magnitude > currentMaxCap then
-				local clampedVelocity = targetVelocity.Unit * currentMaxCap
+			local horizontalTarget = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
+			if horizontalTarget.Magnitude > currentMaxCap then
+				local clampedVelocity = horizontalTarget.Unit * currentMaxCap
 				mover.Velocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
 			end
 		elseif mover:IsA("LinearVelocity") then
 			local targetVelocity = mover.VectorVelocity
-			if targetVelocity.Magnitude > currentMaxCap then
-				local clampedVelocity = targetVelocity.Unit * currentMaxCap
+			local horizontalTarget = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
+			if horizontalTarget.Magnitude > currentMaxCap then
+				local clampedVelocity = horizontalTarget.Unit * currentMaxCap
 				mover.VectorVelocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
 			end
 		end
@@ -413,6 +883,37 @@ end)
 
 do
 task.spawn(function()
+	if not Config.CombatHitMultiplierHooked then
+		local hooked = false
+		local installed = pcall(function()
+			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+			if clientFramework then
+				local classes = clientFramework:WaitForChild("Classes", 5)
+				local combatClassFile = classes and classes:FindFirstChild("CombatClass")
+				if combatClassFile then
+					local success, combatClass = pcall(require, combatClassFile)
+					if success and combatClass and type(combatClass.OnHit) == "function" then
+						local originalOnHit = combatClass.OnHit
+						combatClass.OnHit = function(self, p32, p33, p34)
+							if not Config.MeleeHitMultiplierEnabled then
+								return originalOnHit(self, p32, p33, p34)
+							end
+							for _ = 1, math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 1, 1, 5)) do
+								task.spawn(function()
+									originalOnHit(self, p32, p33, p34)
+								end)
+							end
+						end
+						hooked = true
+					end
+				end
+			end
+		end)
+		if installed and hooked then
+			Config.CombatHitMultiplierHooked = true
+		end
+	end
+
 	if not Config.GunFrameworkModified then
 		local installed = pcall(function()
 			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
@@ -964,17 +1465,44 @@ local function createKeybind(parent, y, text, getter, setter)
 	return refresh
 end
 
+local function createButton(parent, y, text, callback)
+	label(parent, y, text)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -184, 0, y + 2),
+		Size = UDim2.fromOffset(162, 28),
+		BackgroundColor3 = COLORS.ACCENT,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+		ZIndex = 5,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE, 0.18)
+	button.MouseButton1Click:Connect(callback)
+	return button
+end
+
 local mainPage = createPage("Main")
 local attrPage = createPage("Attributes")
 local miscPage = createPage("Misc")
 createPage("Firearms")
+local otherPage = createPage("Other")
+local practicalPage = createPage("Practical")
+local overpoweredPage = createPage("Overpowered")
 local settingsPage = createPage("Settings")
 
 createTab("Main", 1)
 createTab("Attributes", 2)
 createTab("Misc", 3)
 createTab("Firearms", 4)
-createTab("Settings", 5)
+createTab("Other", 5)
+createTab("Practical", 6)
+createTab("Overpowered", 7)
+createTab("Settings", 8)
 
 local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
@@ -1017,6 +1545,13 @@ createToggle(attrCard, 50, "Enable Attribute Mods", function()
 	return Config.AttributesEnabled
 end, function(value)
 	Config.AttributesEnabled = value
+end)
+
+local odmgAttrCard = createCard(attrPage, "ODMG Movement Attributes", 94)
+createToggle(odmgAttrCard, 50, "Enable ODMG Movement Stats", function()
+	return Config.ODMGAttributesEnabled
+end, function(value)
+	Config.ODMGAttributesEnabled = value
 end)
 
 local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * 14)
@@ -1103,7 +1638,7 @@ createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCa
 end)
 
 do
-local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 170)
+local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 246)
 createToggle(weaponCard, 50, "Enable Dmg mult", function()
 	return Config.DamageMultiplierEnabled
 end, function(value)
@@ -1120,6 +1655,15 @@ createToggle(weaponCard, 126, "No Recoil", function()
 	return Config.NoRecoilEnabled
 end, function(value)
 	Config.NoRecoilEnabled = value
+end)
+createToggle(weaponCard, 164, "Melee DMG Mult", function()
+	return Config.MeleeHitMultiplierEnabled
+end, function(value)
+	Config.MeleeHitMultiplierEnabled = value
+end)
+createTextBox(weaponCard, 202, "Melee DMG Mult", Config.MeleeHitMultiplier, function(text, box)
+	Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(text) or Config.MeleeHitMultiplier, 1, 5))
+	box.Text = tostring(Config.MeleeHitMultiplier)
 end)
 
 local aimCard = createCard(pages.Firearms, "AimAssist", 246)
@@ -1150,6 +1694,96 @@ end, function(value)
 	Config.HideFOV = value
 end)
 end
+
+local traitsCard = createCard(otherPage, "Traits", 94)
+createToggle(traitsCard, 50, "Remove Traits", function()
+	return Config.RemoveTraitsEnabled
+end, function(value)
+	Config.RemoveTraitsEnabled = value
+end)
+
+local horseCard = createCard(otherPage, "Horse", 94)
+createToggle(horseCard, 50, "Inf Horse Stam", function()
+	return Config.InfHorseStamEnabled
+end, function(value)
+	Config.InfHorseStamEnabled = value
+end)
+
+local obbyCard = createCard(practicalPage, "Obby", 94)
+createButton(obbyCard, 50, "Run Obby", runObbyOnce)
+
+local speedCard = createCard(practicalPage, "Speed Test", 132)
+createTextBox(speedCard, 50, "Total Time", Config.SpeedTestTime, function(text, box)
+	Config.SpeedTestTime = math.max(tonumber(text) or Config.SpeedTestTime, 1)
+	box.Text = tostring(Config.SpeedTestTime)
+end)
+createButton(speedCard, 88, "Run Speed Test", runSpeedTestOnce)
+
+local musketCard = createCard(practicalPage, "Musket Test Bullseye Expand", 132)
+createToggle(musketCard, 50, "Musket Test Bullseye Expand", function()
+	return Config.MusketBullseyeEnabled
+end, function(value)
+	Config.MusketBullseyeEnabled = value
+	updateMusketBullseyes()
+end)
+createTextBox(musketCard, 88, "XYZ Expansion", "25,25,25", function(text, box)
+	Config.MusketBullseyeSize = parseVector(text, Config.MusketBullseyeSize)
+	box.Text = string.format("%s,%s,%s", Config.MusketBullseyeSize.X, Config.MusketBullseyeSize.Y, Config.MusketBullseyeSize.Z)
+	if Config.MusketBullseyeEnabled then
+		updateMusketBullseyes()
+	end
+end)
+
+local titanDummyCard = createCard(practicalPage, "Titan Dummy", 246)
+createToggle(titanDummyCard, 50, "Titan Dummy Hitbox", function()
+	return Config.TitanDummyHitboxEnabled
+end, function(value)
+	Config.TitanDummyHitboxEnabled = value
+	updateTitanDummies()
+end)
+createTextBox(titanDummyCard, 88, "XYZ Expansion", "18,18,18", function(text, box)
+	Config.TitanDummyHitboxSize = parseVector(text, Config.TitanDummyHitboxSize)
+	box.Text = string.format("%s,%s,%s", Config.TitanDummyHitboxSize.X, Config.TitanDummyHitboxSize.Y, Config.TitanDummyHitboxSize.Z)
+	updateTitanDummies()
+end)
+createToggle(titanDummyCard, 126, "Countdown", function()
+	return Config.TitanDummyCountdownEnabled
+end, function(value)
+	Config.TitanDummyCountdownEnabled = value
+	updateTitanDummies()
+end)
+createToggle(titanDummyCard, 164, "Titan Dummy Status", function()
+	return Config.TitanDummyStatusEnabled
+end, function(value)
+	Config.TitanDummyStatusEnabled = value
+	updateTitanDummies()
+end)
+createToggle(titanDummyCard, 202, "Show Where They Are", function()
+	return Config.TitanDummyShowEnabled
+end, function(value)
+	Config.TitanDummyShowEnabled = value
+	updateTitanDummies()
+end)
+
+local rawBandageCard = createCard(overpoweredPage, "Raw Bandage Heal", 208)
+createToggle(rawBandageCard, 50, "Raw Bandage Heal", function()
+	return Config.RawBandageEnabled
+end, function(value)
+	Config.RawBandageEnabled = value
+	if value then
+		fireRawBandageHeal()
+	end
+end)
+createTextBox(rawBandageCard, 88, "Heal Amount", Config.RawBandageHealAmount, function(text, box)
+	Config.RawBandageHealAmount = tonumber(text) or Config.RawBandageHealAmount
+	box.Text = tostring(Config.RawBandageHealAmount)
+end)
+local refreshRawBandageBind = createKeybind(rawBandageCard, 126, "Raw Heal Key", function()
+	return Config.RawBandageKey
+end, function(value)
+	Config.RawBandageKey = value
+end)
+createButton(rawBandageCard, 164, "Fire Raw Heal", fireRawBandageHeal)
 
 local interfaceCard = createCard(settingsPage, "Interface", 212)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
@@ -1248,6 +1882,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		end
 		refreshToggleBind()
 		refreshRefillBind()
+		refreshRawBandageBind()
 		return
 	end
 
@@ -1259,6 +1894,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		setWindowOpen(not state.Open)
 	elseif input.KeyCode == Config.RefillKey then
 		instantRefillAll()
+	elseif input.KeyCode == Config.RawBandageKey then
+		fireRawBandageHeal()
 	end
 end)
 
