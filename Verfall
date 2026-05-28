@@ -8,6 +8,8 @@ local CollectionService = game:GetService("CollectionService")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
+local DEFAULT_TEXTURE_IMAGE = "rbxassetid://85751012991412"
+local DEFAULT_TEXTURE_TRANSPARENCY = 0.74
 
 _G.UI_Config = _G.UI_Config or {
 	NapeEnabled = true,
@@ -38,43 +40,60 @@ _G.UI_Config = _G.UI_Config or {
 	BandageEnabled = true,
 	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
-	VelocityCapperEnabled = false,
+	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
 	OtherHealAmount = 150,
 	RefillKey = Enum.KeyCode.U,
 	ToggleUIKey = Enum.KeyCode.RightShift,
-	TextureImage = "rbxassetid://0",
-	TextureTransparency = 0.82,
+	TextureImage = DEFAULT_TEXTURE_IMAGE,
+	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 9999,
+	DamageMultiplier = 3,
 	NoRecoilEnabled = true,
 	MeleeHitMultiplierEnabled = true,
 	MeleeHitMultiplier = 3,
 	AimAssistEnabled = true,
+	AimAssistTeamCheck = false,
 	FOVEnabled = true,
-	FOVRadius = 150,
+	FOVRadius = 130,
 	FOVTransparency = 0.5,
 	HideFOV = false,
+	PlayerESPEnabled = true,
+	PlayerESPDistanceEnabled = true,
+	PlayerESPMaxDistance = 3000,
+	PlayerESPOptimized = true,
+	PlayerESPUpdateRate = 0.25,
 	RemoveTraitsEnabled = true,
-	InfHorseStamEnabled = false,
-	MusketBullseyeEnabled = true,
+	InfHorseStamEnabled = true,
+	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
-	TitanDummyHitboxEnabled = true,
+	TitanDummyHitboxEnabled = false,
 	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
-	TitanDummyCountdownEnabled = true,
-	TitanDummyStatusEnabled = true,
-	TitanDummyShowEnabled = true,
-	RawBandageEnabled = false,
-	RawBandageHealAmount = 25,
+	TitanDummyCountdownEnabled = false,
+	TitanDummyStatusEnabled = false,
+	TitanDummyShowEnabled = false,
+	RawBandageEnabled = true,
+	RawBandageHealAmount = 35,
 	RawBandageKey = Enum.KeyCode.V,
+	BandageRemovalMacroEnabled = true,
+	BandageRemovalMacroKey = Enum.KeyCode.N,
+	BladeModsEnabled = true,
+	BladeDamageMultiplier = 3,
+	BladeInfiniteDurabilityEnabled = false,
 }
 
 local Config = _G.UI_Config
 
 Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
-Config.TextureImage = Config.TextureImage or "rbxassetid://0"
-Config.TextureTransparency = Config.TextureTransparency or 0.82
+if not Config.TextureImage or Config.TextureImage == "rbxassetid://0" then
+	Config.TextureImage = DEFAULT_TEXTURE_IMAGE
+end
+Config.TextureTransparency = tonumber(Config.TextureTransparency) or DEFAULT_TEXTURE_TRANSPARENCY
+if Config.TextureImage == DEFAULT_TEXTURE_IMAGE and Config.TextureTransparency == 0.82 then
+	Config.TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY
+end
+Config.TextureTransparency = math.clamp(Config.TextureTransparency, 0, 1)
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
@@ -92,10 +111,16 @@ Config.NoRecoilEnabled = Config.NoRecoilEnabled ~= false
 Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled ~= false
 Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 3, 1, 5))
 Config.AimAssistEnabled = Config.AimAssistEnabled ~= false
+Config.AimAssistTeamCheck = Config.AimAssistTeamCheck == true
 Config.FOVEnabled = Config.FOVEnabled ~= false
 Config.FOVRadius = Config.FOVRadius or 150
 Config.FOVTransparency = Config.FOVTransparency or 0.5
 Config.HideFOV = Config.HideFOV or false
+Config.PlayerESPEnabled = Config.PlayerESPEnabled == true
+Config.PlayerESPDistanceEnabled = Config.PlayerESPDistanceEnabled == true
+Config.PlayerESPMaxDistance = tonumber(Config.PlayerESPMaxDistance) or 1500
+Config.PlayerESPOptimized = Config.PlayerESPOptimized ~= false
+Config.PlayerESPUpdateRate = math.clamp(tonumber(Config.PlayerESPUpdateRate) or 0.25, 0.05, 2)
 Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled ~= false
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
 Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled ~= false
@@ -109,6 +134,11 @@ Config.TitanDummyShowEnabled = Config.TitanDummyShowEnabled ~= false
 Config.RawBandageEnabled = Config.RawBandageEnabled or false
 Config.RawBandageHealAmount = tonumber(Config.RawBandageHealAmount) or 25
 Config.RawBandageKey = Config.RawBandageKey or Enum.KeyCode.V
+Config.BandageRemovalMacroEnabled = Config.BandageRemovalMacroEnabled == true
+Config.BandageRemovalMacroKey = Config.BandageRemovalMacroKey or Enum.KeyCode.N
+Config.BladeModsEnabled = Config.BladeModsEnabled == true
+Config.BladeDamageMultiplier = math.max(tonumber(Config.BladeDamageMultiplier) or 3, 1)
+Config.BladeInfiniteDurabilityEnabled = Config.BladeInfiniteDurabilityEnabled ~= false
 
 local movementAttributes = {
 	OdmHookVeloGain = true,
@@ -816,6 +846,266 @@ local function fireRawBandageHeal()
 	end)
 end
 
+local bandageRemovalProcessing = false
+local bandageRemovalData = nil
+
+local function getBandageRemovalData()
+	if bandageRemovalData then
+		return bandageRemovalData
+	end
+
+	local success, clientFramework = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("ClientFramework", 5))
+	end)
+
+	if not success or not clientFramework then
+		return nil
+	end
+
+	local bandageEvent = clientFramework.ServerEvent and clientFramework.ServerEvent("Bandage")
+	local bandageFunction = clientFramework.ServerFunction and clientFramework.ServerFunction("Bandage")
+
+	if not bandageEvent or not bandageFunction then
+		return nil
+	end
+
+	bandageRemovalData = {
+		ClientFramework = clientFramework,
+		BandageEvent = bandageEvent,
+		BandageFunction = bandageFunction,
+		BandageSFX = clientFramework.ReplicatedAssets
+			and clientFramework.ReplicatedAssets:FindFirstChild("SFX")
+			and clientFramework.ReplicatedAssets.SFX:FindFirstChild("Tools")
+			and clientFramework.ReplicatedAssets.SFX.Tools:FindFirstChild("Bandage"),
+		Mouse = localPlayer:GetMouse(),
+	}
+
+	return bandageRemovalData
+end
+
+local function notifyBandageRemoval(clientFramework, text)
+	if clientFramework and type(clientFramework.Notification) == "function" then
+		clientFramework.Notification("Notification", text)
+	else
+		warn("[Bandage Removal Macro]", text)
+	end
+end
+
+local function executeBandageRemoval()
+	if bandageRemovalProcessing or not Config.BandageRemovalMacroEnabled then
+		return
+	end
+
+	bandageRemovalProcessing = true
+
+	local ok, err = pcall(function()
+		local data = getBandageRemovalData()
+		if not data then
+			return
+		end
+
+		local clientFramework = data.ClientFramework
+		local character = localPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+
+		if not character or not humanoid or not rootPart or humanoid.Health <= 0 then
+			return
+		end
+
+		local mouseTarget = data.Mouse.Target
+		local targetCharacter = nil
+		local targetPlayer = nil
+
+		if mouseTarget and (mouseTarget.Position - rootPart.Position).Magnitude < 5 then
+			targetCharacter = clientFramework.CheckForHumanoid(mouseTarget)
+
+			if targetCharacter and targetCharacter ~= character then
+				targetPlayer = clientFramework.GetPlayerFromCharacter(targetCharacter)
+
+				if not targetCharacter:GetAttribute("Bandageable") then
+					targetCharacter = nil
+					targetPlayer = nil
+				end
+			end
+		end
+
+		if targetPlayer and targetCharacter and (targetCharacter:GetAttribute("BandageCount") or 0) > 0 then
+			if CollectionService:HasTag(targetCharacter, "Reclusive") then
+				notifyBandageRemoval(clientFramework, "They don't need my help.")
+				return
+			end
+
+			local aidRequested = targetPlayer:GetAttribute("AidRequests") or false
+
+			if aidRequested then
+				local requestPayload = { character, Distance = 5 }
+				local promptString = ("%s is requesting to bandage you!"):format(clientFramework.GetLoreName())
+
+				if clientFramework.SendPlayerRequest(targetPlayer, promptString, { "Accept", "Decline" }, "Bandage", requestPayload) == "Accept" then
+					if not targetCharacter:GetAttribute("Bandageable") then
+						return notifyBandageRemoval(clientFramework, "Someone's already working on them.")
+					end
+
+					if mouseTarget and (mouseTarget.Position - rootPart.Position).Magnitude > 5 then
+						return notifyBandageRemoval(clientFramework, "They're too far away.")
+					end
+
+					data.BandageFunction:InvokeServer("RemoveOther", targetPlayer)
+				end
+			else
+				data.BandageFunction:InvokeServer("RemoveOther", targetPlayer)
+			end
+		elseif (character:GetAttribute("BandageCount") or 0) > 0 then
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			local animationAsset = clientFramework.ReplicatedAssets
+				and clientFramework.ReplicatedAssets:FindFirstChild("Animations")
+				and clientFramework.ReplicatedAssets.Animations:FindFirstChild("Tools")
+				and clientFramework.ReplicatedAssets.Animations.Tools:FindFirstChild("Bandage")
+
+			if animator and animationAsset and animationAsset:FindFirstChild("SelfHeal1") then
+				local selfHealAnim = animator:LoadAnimation(animationAsset.SelfHeal1)
+				selfHealAnim:Play()
+
+				pcall(function()
+					if data.BandageSFX and data.BandageSFX:FindFirstChild("Heal") then
+						clientFramework.SimpleFx.GlobalSound(rootPart, data.BandageSFX.Heal)
+					end
+				end)
+
+				pcall(function()
+					clientFramework.PlayerObject:AddAttribute("HotbarDisabled")
+				end)
+
+				selfHealAnim.Stopped:Wait()
+
+				pcall(function()
+					clientFramework.PlayerObject:RemoveAttribute("HotbarDisabled")
+				end)
+			end
+
+			data.BandageEvent:FireServer("SelfRemove", humanoid)
+		else
+			notifyBandageRemoval(clientFramework, "No valid bandage targets detected.")
+		end
+	end)
+
+	if not ok then
+		warn("[Bandage Removal Macro]", err)
+	end
+
+	bandageRemovalProcessing = false
+end
+
+local bladeMods = {
+	Installed = false,
+	BladeClass = nil,
+	OriginalNew = nil,
+	OriginalCalculateDura = nil,
+	OriginalClashed = nil,
+}
+
+local function applyBladeInstanceMods(instance)
+	if not instance or not Config.BladeModsEnabled then
+		return instance
+	end
+
+	local multiplier = math.max(tonumber(Config.BladeDamageMultiplier) or 1, 1)
+
+	if type(instance.Damage) == "number" then
+		if instance.__CheddarBaseDamage == nil then
+			instance.__CheddarBaseDamage = instance.Damage
+		end
+		instance.Damage = instance.__CheddarBaseDamage * multiplier
+	end
+
+	if Config.BladeInfiniteDurabilityEnabled then
+		instance.MaxDurability = 999999
+		instance.Durability = 999999
+		if type(instance.UpdateDurability) == "function" then
+			pcall(function()
+				instance:UpdateDurability()
+			end)
+		end
+	end
+
+	return instance
+end
+
+local function installBladeMods()
+	if bladeMods.Installed then
+		return
+	end
+
+	local clientFramework = ReplicatedStorage:WaitForChild("ClientFramework", 5)
+	local classes = clientFramework and clientFramework:WaitForChild("Classes", 5)
+	local odmClass = classes and classes:WaitForChild("OdmClass", 5)
+	local subClasses = odmClass and odmClass:WaitForChild("SubClasses", 5)
+	local bladeClassModule = subClasses and subClasses:WaitForChild("BladeClass", 5)
+
+	if not bladeClassModule then
+		return
+	end
+
+	local success, bladeClass = pcall(require, bladeClassModule)
+	if not success or type(bladeClass) ~= "table" then
+		return
+	end
+
+	bladeMods.BladeClass = bladeClass
+
+	if type(bladeClass.New) == "function" then
+		bladeClass.__CheddarOriginalNew = bladeClass.__CheddarOriginalNew or bladeClass.New
+		bladeMods.OriginalNew = bladeClass.__CheddarOriginalNew
+		if bladeClass.New ~= bladeClass.__CheddarWrappedNew then
+			bladeClass.__CheddarWrappedNew = function(...)
+				return applyBladeInstanceMods(bladeClass.__CheddarOriginalNew(...))
+			end
+			bladeClass.New = bladeClass.__CheddarWrappedNew
+		end
+	end
+
+	if type(bladeClass.CalculateDura) == "function" then
+		bladeClass.__CheddarOriginalCalculateDura = bladeClass.__CheddarOriginalCalculateDura or bladeClass.CalculateDura
+		bladeMods.OriginalCalculateDura = bladeClass.__CheddarOriginalCalculateDura
+		if bladeClass.CalculateDura ~= bladeClass.__CheddarWrappedCalculateDura then
+			bladeClass.__CheddarWrappedCalculateDura = function(self, ...)
+				if Config.BladeModsEnabled and Config.BladeInfiniteDurabilityEnabled then
+					self.MaxDurability = 999999
+					self.Durability = 999999
+					if type(self.UpdateDurability) == "function" then
+						self:UpdateDurability()
+					end
+					return
+				end
+				return bladeClass.__CheddarOriginalCalculateDura(self, ...)
+			end
+			bladeClass.CalculateDura = bladeClass.__CheddarWrappedCalculateDura
+		end
+	end
+
+	if type(bladeClass.Clashed) == "function" then
+		bladeClass.__CheddarOriginalClashed = bladeClass.__CheddarOriginalClashed or bladeClass.Clashed
+		bladeMods.OriginalClashed = bladeClass.__CheddarOriginalClashed
+		if bladeClass.Clashed ~= bladeClass.__CheddarWrappedClashed then
+			bladeClass.__CheddarWrappedClashed = function(self, ...)
+				if Config.BladeModsEnabled and Config.BladeInfiniteDurabilityEnabled then
+					self.MaxDurability = 999999
+					self.Durability = 999999
+					if type(self.UpdateDurability) == "function" then
+						self:UpdateDurability()
+					end
+					return
+				end
+				return bladeClass.__CheddarOriginalClashed(self, ...)
+			end
+			bladeClass.Clashed = bladeClass.__CheddarWrappedClashed
+		end
+	end
+
+	bladeMods.Installed = true
+end
+
 local function disableFallDamageLoop()
 	for _, object in pairs(getgc(false)) do
 		if type(object) == "function" then
@@ -1004,13 +1294,37 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+local function getCharactersFolder()
+	local world = workspace:FindFirstChild("World")
+	return world and world:FindFirstChild("Characters")
+end
+
+local function getPlayerTeam(player)
+	if not player then
+		return nil
+	end
+	local teamAttribute = player:GetAttribute("Team")
+	if teamAttribute and teamAttribute ~= "" then
+		return tostring(teamAttribute)
+	end
+	if player.Team then
+		return player.Team.Name
+	end
+	return nil
+end
+
+local function isSameTeam(playerA, playerB)
+	local teamA = getPlayerTeam(playerA)
+	local teamB = getPlayerTeam(playerB)
+	return teamA and teamB and teamA == teamB
+end
+
 local function getClosestPlayerToMouse()
 	if not Config.AimAssistEnabled then
 		return nil
 	end
 	local character = localPlayer.Character
-	local world = workspace:FindFirstChild("World")
-	local charactersFolder = world and world:FindFirstChild("Characters")
+	local charactersFolder = getCharactersFolder()
 	local camera = workspace.CurrentCamera
 	if not character or not charactersFolder or not camera then
 		return nil
@@ -1020,9 +1334,10 @@ local function getClosestPlayerToMouse()
 	local shortestDistance = math.huge
 	for _, charModel in ipairs(charactersFolder:GetChildren()) do
 		if charModel:IsA("Model") and charModel ~= character then
+			local targetPlayer = Players:FindFirstChild(charModel.Name)
 			local humanoid = charModel:FindFirstChildOfClass("Humanoid")
 			local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
-			if targetPart and humanoid and humanoid.Health > 0 then
+			if targetPlayer and not (Config.AimAssistTeamCheck and isSameTeam(localPlayer, targetPlayer)) and targetPart and humanoid and humanoid.Health > 0 then
 				local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
 				if onScreen then
 					local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
@@ -1035,6 +1350,183 @@ local function getClosestPlayerToMouse()
 		end
 	end
 	return closestPart
+end
+
+local espNameCache = {}
+local espClientFramework
+local espClientFrameworkChecked = false
+local espTracked = {}
+local espIndex = 1
+local espAccumulator = 0
+local espStarted = false
+
+local function getESPClientFramework()
+	if espClientFrameworkChecked then
+		return espClientFramework
+	end
+	espClientFrameworkChecked = true
+	local frameworkFile = ReplicatedStorage:FindFirstChild("ClientFramework")
+	if frameworkFile then
+		local success, framework = pcall(require, frameworkFile)
+		if success then
+			espClientFramework = framework
+		end
+	end
+	return espClientFramework
+end
+
+local function huntTrueLoreName(targetPlayer, characterModel)
+	if espNameCache[targetPlayer.Name] then
+		return espNameCache[targetPlayer.Name]
+	end
+	local framework = getESPClientFramework()
+	if framework and framework.ClientData then
+		local ok, data = pcall(framework.ClientData)
+		if ok and data and data.Profiles and data.Profiles[targetPlayer.Name] then
+			local profile = data.Profiles[targetPlayer.Name]
+			if profile.FirstName or profile.LastName then
+				local foundName = string.format("%s %s", profile.FirstName or "", profile.LastName or "")
+				espNameCache[targetPlayer.Name] = foundName
+				return foundName
+			end
+		end
+	end
+	local attributes = characterModel:GetAttributes()
+	if attributes.FirstName or attributes.LastName then
+		local foundName = string.format("%s %s", attributes.FirstName or "", attributes.LastName or "")
+		espNameCache[targetPlayer.Name] = foundName
+		return foundName
+	end
+	for _, object in ipairs(characterModel:GetDescendants()) do
+		if object:IsA("StringValue") and (object.Name:lower():find("name") or object.Name:lower():find("rp")) and object.Value ~= "" and object.Value ~= targetPlayer.Name then
+			espNameCache[targetPlayer.Name] = object.Value
+			return object.Value
+		end
+	end
+	local first = targetPlayer:GetAttribute("FirstName")
+	local last = targetPlayer:GetAttribute("LastName")
+	if (first and first ~= "") or (last and last ~= "") then
+		local foundName = string.format("%s %s", first or "", last or "")
+		espNameCache[targetPlayer.Name] = foundName
+		return foundName
+	end
+	return nil
+end
+
+local function removePlayerESP(characterModel)
+	local existing = characterModel and characterModel:FindFirstChild("DevESP_UI")
+	if existing then
+		existing:Destroy()
+	end
+	espTracked[characterModel] = nil
+end
+
+local function getOrCreatePlayerESP(characterModel, head)
+	local billboard = characterModel:FindFirstChild("DevESP_UI")
+	if not billboard then
+		billboard = Instance.new("BillboardGui")
+		billboard.Name = "DevESP_UI"
+		billboard.Size = UDim2.new(0, 400, 0, 50)
+		billboard.AlwaysOnTop = true
+		billboard.StudsOffset = Vector3.new(0, 3, 0)
+		billboard.Adornee = head
+		local textLabel = Instance.new("TextLabel")
+		textLabel.Name = "ESPLabel"
+		textLabel.Size = UDim2.new(1, 0, 1, 0)
+		textLabel.BackgroundTransparency = 1
+		textLabel.TextSize = 14
+		textLabel.Font = Enum.Font.GothamBold
+		textLabel.TextStrokeTransparency = 0
+		textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		textLabel.Parent = billboard
+		billboard.Parent = characterModel
+	end
+	billboard.Adornee = head
+	return billboard, billboard:FindFirstChild("ESPLabel")
+end
+
+local function updatePlayerESP(characterModel)
+	if not Config.PlayerESPEnabled or not characterModel:IsA("Model") or characterModel == localPlayer.Character then
+		removePlayerESP(characterModel)
+		return
+	end
+	local targetPlayer = Players:FindFirstChild(characterModel.Name)
+	local head = characterModel:FindFirstChild("Head")
+	local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
+	if not targetPlayer or not head or not humanoid or humanoid.Health <= 0 then
+		removePlayerESP(characterModel)
+		return
+	end
+	local root = characterModel:FindFirstChild("HumanoidRootPart")
+	local localRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+	local distance = 0
+	if root and localRoot then
+		distance = math.floor((root.Position - localRoot.Position).Magnitude)
+	end
+	if Config.PlayerESPDistanceEnabled and distance > Config.PlayerESPMaxDistance then
+		removePlayerESP(characterModel)
+		return
+	end
+	local loreName = huntTrueLoreName(targetPlayer, characterModel)
+	local displayLore = loreName and string.format("(%s)", loreName) or "(???)"
+	local faction = getPlayerTeam(targetPlayer) or "Civilian"
+	local billboard, textLabel = getOrCreatePlayerESP(characterModel, head)
+	if textLabel then
+		textLabel.Text = string.format("%s | %s | HP: %d | %ds | %s", targetPlayer.Name, displayLore, math.floor(humanoid.Health), distance, faction)
+		textLabel.TextColor3 = faction == "Staff Team" and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(255, 255, 255)
+	end
+	espTracked[characterModel] = billboard
+end
+
+local function clearPlayerESP()
+	for characterModel in pairs(espTracked) do
+		removePlayerESP(characterModel)
+	end
+	local charactersFolder = getCharactersFolder()
+	if charactersFolder then
+		for _, characterModel in ipairs(charactersFolder:GetChildren()) do
+			removePlayerESP(characterModel)
+		end
+	end
+end
+
+local function startPlayerESP()
+	if espStarted then
+		return
+	end
+	espStarted = true
+	RunService.RenderStepped:Connect(function(deltaTime)
+		if not Config.PlayerESPEnabled then
+			if next(espTracked) then
+				clearPlayerESP()
+			end
+			return
+		end
+		espAccumulator = espAccumulator + deltaTime
+		local updateRate = Config.PlayerESPOptimized and Config.PlayerESPUpdateRate or 0.05
+		if espAccumulator < updateRate then
+			return
+		end
+		espAccumulator = 0
+		local charactersFolder = getCharactersFolder()
+		if not charactersFolder then
+			clearPlayerESP()
+			return
+		end
+		local characters = charactersFolder:GetChildren()
+		local batchSize = Config.PlayerESPOptimized and 20 or #characters
+		for index = 1, math.min(batchSize, #characters) do
+			if espIndex > #characters then
+				espIndex = 1
+			end
+			updatePlayerESP(characters[espIndex])
+			espIndex = espIndex + 1
+		end
+	end)
+	local charactersFolderForESP = getCharactersFolder()
+	if charactersFolderForESP then
+		charactersFolderForESP.ChildRemoving:Connect(removePlayerESP)
+	end
 end
 
 if not Config.AimAssistHookActive then
@@ -1155,11 +1647,15 @@ addGradient(main, COLORS.BG, Color3.fromRGB(8, 15, 25))
 local texture = mk("ImageLabel", {
 	Name = "TextureOverlay",
 	Parent = main,
-	Size = UDim2.fromScale(1, 1),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromScale(1.08, 1.08),
 	BackgroundTransparency = 1,
 	Image = Config.TextureImage,
+	ImageColor3 = Color3.fromRGB(185, 210, 245),
 	ImageTransparency = Config.TextureTransparency,
 	ScaleType = Enum.ScaleType.Crop,
+	Active = false,
 	ZIndex = 1,
 })
 addCorner(texture, 18)
@@ -1168,7 +1664,7 @@ local tint = mk("Frame", {
 	Parent = main,
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = COLORS.BG,
-	BackgroundTransparency = 0.28,
+	BackgroundTransparency = 0.22,
 	BorderSizePixel = 0,
 	ZIndex = 2,
 })
@@ -1490,6 +1986,7 @@ local mainPage = createPage("Main")
 local attrPage = createPage("Attributes")
 local miscPage = createPage("Misc")
 createPage("Firearms")
+local visualPage = createPage("Visual")
 local otherPage = createPage("Other")
 local practicalPage = createPage("Practical")
 local overpoweredPage = createPage("Overpowered")
@@ -1499,10 +1996,11 @@ createTab("Main", 1)
 createTab("Attributes", 2)
 createTab("Misc", 3)
 createTab("Firearms", 4)
-createTab("Other", 5)
-createTab("Practical", 6)
-createTab("Overpowered", 7)
-createTab("Settings", 8)
+createTab("Visual", 5)
+createTab("Other", 6)
+createTab("Practical", 7)
+createTab("Overpowered", 8)
+createTab("Settings", 9)
 
 local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
@@ -1666,7 +2164,7 @@ createTextBox(weaponCard, 202, "Melee DMG Mult", Config.MeleeHitMultiplier, func
 	box.Text = tostring(Config.MeleeHitMultiplier)
 end)
 
-local aimCard = createCard(pages.Firearms, "AimAssist", 246)
+local aimCard = createCard(pages.Firearms, "AimAssist", 284)
 createToggle(aimCard, 50, "Enable AimAssist", function()
 	return Config.AimAssistEnabled
 end, function(value)
@@ -1693,7 +2191,43 @@ createToggle(aimCard, 202, "Hide FOV", function()
 end, function(value)
 	Config.HideFOV = value
 end)
+createToggle(aimCard, 240, "Team Check", function()
+	return Config.AimAssistTeamCheck
+end, function(value)
+	Config.AimAssistTeamCheck = value
+end)
 end
+
+local playerESPCard = createCard(visualPage, "Player ESP", 246)
+createToggle(playerESPCard, 50, "Enable Player ESP", function()
+	return Config.PlayerESPEnabled
+end, function(value)
+	Config.PlayerESPEnabled = value
+	if not value then
+		clearPlayerESP()
+	end
+end)
+createToggle(playerESPCard, 88, "Use Distance Limit", function()
+	return Config.PlayerESPDistanceEnabled
+end, function(value)
+	Config.PlayerESPDistanceEnabled = value
+end)
+createTextBox(playerESPCard, 126, "Max Distance", Config.PlayerESPMaxDistance, function(text, box)
+	local value = tonumber(text)
+	if value and value > 0 then
+		Config.PlayerESPMaxDistance = value
+	end
+	box.Text = tostring(Config.PlayerESPMaxDistance)
+end)
+createToggle(playerESPCard, 164, "Optimization Mode", function()
+	return Config.PlayerESPOptimized
+end, function(value)
+	Config.PlayerESPOptimized = value
+end)
+createTextBox(playerESPCard, 202, "Update Rate", Config.PlayerESPUpdateRate, function(text, box)
+	Config.PlayerESPUpdateRate = math.clamp(tonumber(text) or Config.PlayerESPUpdateRate, 0.05, 2)
+	box.Text = tostring(Config.PlayerESPUpdateRate)
+end)
 
 local traitsCard = createCard(otherPage, "Traits", 94)
 createToggle(traitsCard, 50, "Remove Traits", function()
@@ -1784,6 +2318,44 @@ end, function(value)
 	Config.RawBandageKey = value
 end)
 createButton(rawBandageCard, 164, "Fire Raw Heal", fireRawBandageHeal)
+
+local bandageRemovalMacroCard = createCard(overpoweredPage, "Bandage Removal Macro", 170)
+createToggle(bandageRemovalMacroCard, 50, "Enable Bandage Removal Macro", function()
+	return Config.BandageRemovalMacroEnabled
+end, function(value)
+	Config.BandageRemovalMacroEnabled = value
+end)
+local refreshBandageRemovalBind = createKeybind(bandageRemovalMacroCard, 88, "Removal Key", function()
+	return Config.BandageRemovalMacroKey
+end, function(value)
+	Config.BandageRemovalMacroKey = value
+end)
+createButton(bandageRemovalMacroCard, 126, "Run Removal", executeBandageRemoval)
+
+local bladeModsCard = createCard(overpoweredPage, "Blade Mods", 170)
+createToggle(bladeModsCard, 50, "Enable Blade Mods", function()
+	return Config.BladeModsEnabled
+end, function(value)
+	Config.BladeModsEnabled = value
+	if value then
+		task.spawn(installBladeMods)
+	end
+end)
+createTextBox(bladeModsCard, 88, "Damage Multiplier", Config.BladeDamageMultiplier, function(text, box)
+	Config.BladeDamageMultiplier = math.max(tonumber(text) or Config.BladeDamageMultiplier, 1)
+	box.Text = tostring(Config.BladeDamageMultiplier)
+	if Config.BladeModsEnabled then
+		task.spawn(installBladeMods)
+	end
+end)
+createToggle(bladeModsCard, 126, "Infinite Durability", function()
+	return Config.BladeInfiniteDurabilityEnabled
+end, function(value)
+	Config.BladeInfiniteDurabilityEnabled = value
+	if Config.BladeModsEnabled then
+		task.spawn(installBladeMods)
+	end
+end)
 
 local interfaceCard = createCard(settingsPage, "Interface", 212)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
@@ -1883,6 +2455,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		refreshToggleBind()
 		refreshRefillBind()
 		refreshRawBandageBind()
+		refreshBandageRemovalBind()
 		return
 	end
 
@@ -1896,8 +2469,15 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		instantRefillAll()
 	elseif input.KeyCode == Config.RawBandageKey then
 		fireRawBandageHeal()
+	elseif input.KeyCode == Config.BandageRemovalMacroKey then
+		task.spawn(executeBandageRemoval)
 	end
 end)
 
+if Config.BladeModsEnabled then
+	task.spawn(installBladeMods)
+end
+
 switchPage("Main")
 setWindowOpen(true)
+task.spawn(startPlayerESP)
