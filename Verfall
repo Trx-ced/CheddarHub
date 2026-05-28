@@ -22,15 +22,15 @@ _G.UI_Config = _G.UI_Config or {
 	AttributesEnabled = true,
 	ODMGAttributesEnabled = false,
 	CustomStats = {
-		FirearmRange = 500,
+		FirearmRange = 1500,
 		GasConservation = 0.5,
-		MeleeDamage = 5000,
+		MeleeDamage = 50,
 		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
 		OdmVeloCap = 300,
 		PlayerCritChance = 1000,
-		ReloadSpeed = 1.5,
-		RunSpeed = 1,
+		ReloadSpeed = 1.75,
+		RunSpeed = 9,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
@@ -38,7 +38,7 @@ _G.UI_Config = _G.UI_Config or {
 		VelocityScaling = 1,
 	},
 	BandageEnabled = true,
-	BandageRemovalEnabled = false,
+	BandageRemovalEnabled = true,
 	NoFallDamageEnabled = true,
 	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
@@ -48,39 +48,39 @@ _G.UI_Config = _G.UI_Config or {
 	TextureImage = DEFAULT_TEXTURE_IMAGE,
 	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 3,
+	DamageMultiplier = 10,
 	NoRecoilEnabled = true,
 	MeleeHitMultiplierEnabled = true,
 	MeleeHitMultiplier = 3,
 	AimAssistEnabled = true,
-	AimAssistTeamCheck = false,
+	AimAssistTeamCheck = true,
 	FOVEnabled = true,
-	FOVRadius = 130,
+	FOVRadius = 150,
 	FOVTransparency = 0.5,
 	HideFOV = true,
-	PlayerESPEnabled = true,
-	PlayerESPDistanceEnabled = true,
-	PlayerESPMaxDistance = 3000,
+	PlayerESPEnabled = false,
+	PlayerESPDistanceEnabled = false,
+	PlayerESPMaxDistance = 1500,
 	PlayerESPOptimized = true,
 	PlayerESPUpdateRate = 0.25,
 	RemoveTraitsEnabled = true,
 	InfHorseStamEnabled = true,
-	MusketBullseyeEnabled = false,
+	MusketBullseyeEnabled = true,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
-	TitanDummyHitboxEnabled = false,
+	TitanDummyHitboxEnabled = true,
 	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
-	TitanDummyCountdownEnabled = false,
-	TitanDummyStatusEnabled = false,
-	TitanDummyShowEnabled = false,
+	TitanDummyCountdownEnabled = true,
+	TitanDummyStatusEnabled = true,
+	TitanDummyShowEnabled = true,
 	RawBandageEnabled = true,
-	RawBandageHealAmount = 35,
+	RawBandageHealAmount = 30,
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = true,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
 	BladeModsEnabled = true,
 	BladeDamageMultiplier = 3,
-	BladeInfiniteDurabilityEnabled = false,
+	BladeInfiniteDurabilityEnabled = true,
 }
 
 local Config = _G.UI_Config
@@ -1296,7 +1296,38 @@ end)
 
 local function getCharactersFolder()
 	local world = workspace:FindFirstChild("World")
-	return world and world:FindFirstChild("Characters")
+	if not world then
+		return nil
+	end
+
+	local entities = world:FindFirstChild("Entities")
+	return world:FindFirstChild("Characters")
+		or world:FindFirstChild("PlayerCharacters")
+		or (entities and entities:FindFirstChild("PlayerCharacters"))
+		or workspace:FindFirstChild("PlayerCharacters")
+		or workspace:FindFirstChild("Characters")
+end
+
+local function getCharacterFolders()
+	local folders = {}
+	local seen = {}
+	local world = workspace:FindFirstChild("World")
+	local entities = world and world:FindFirstChild("Entities")
+
+	local function addFolder(folder)
+		if folder and not seen[folder] then
+			seen[folder] = true
+			folders[#folders + 1] = folder
+		end
+	end
+
+	addFolder(world and world:FindFirstChild("Characters"))
+	addFolder(world and world:FindFirstChild("PlayerCharacters"))
+	addFolder(entities and entities:FindFirstChild("PlayerCharacters"))
+	addFolder(workspace:FindFirstChild("PlayerCharacters"))
+	addFolder(workspace:FindFirstChild("Characters"))
+
+	return folders
 end
 
 local function getPlayerTeam(player)
@@ -1313,9 +1344,142 @@ local function getPlayerTeam(player)
 	return nil
 end
 
-local function isSameTeam(playerA, playerB)
-	local teamA = getPlayerTeam(playerA)
-	local teamB = getPlayerTeam(playerB)
+local function readTextOrValue(object)
+	if not object then
+		return nil
+	end
+
+	local okValue, value = pcall(function()
+		return object.Value
+	end)
+	if okValue and value ~= nil and tostring(value) ~= "" then
+		return tostring(value)
+	end
+
+	local okText, text = pcall(function()
+		return object.Text
+	end)
+	if okText and text ~= nil and tostring(text) ~= "" then
+		return tostring(text)
+	end
+
+	return nil
+end
+
+local function getLocalProfileBranch()
+	local playerGui = localPlayer:FindFirstChild("PlayerGui")
+	local mainMenu = playerGui and playerGui:FindFirstChild("MainMenu")
+	local menuFrame = mainMenu and mainMenu:FindFirstChild("MenuFrame")
+	local frames = menuFrame and menuFrame:FindFirstChild("Frames")
+	local profile = frames and frames:FindFirstChild("Profile")
+	local profileFrame = profile and profile:FindFirstChild("Profile")
+	local information = profileFrame and profileFrame:FindFirstChild("Information")
+	local list = information and information:FindFirstChild("List")
+	local branch = list and list:FindFirstChild("Branch")
+
+	return readTextOrValue(branch)
+end
+
+local function findTeamNameFromLeaderboardRow(row)
+	if not row then
+		return nil
+	end
+
+	local scrollingFrame = row.Parent
+	if not scrollingFrame then
+		return nil
+	end
+
+	local teamLayoutOrder = row.LayoutOrder - 1
+
+	for _, sibling in ipairs(scrollingFrame:GetChildren()) do
+		if sibling.Name:sub(1, 5) == "Team_" and sibling.LayoutOrder == teamLayoutOrder then
+			local teamName = sibling:FindFirstChild("TeamName", true)
+			return readTextOrValue(teamName) or sibling.Name:gsub("^Team_", "")
+		end
+	end
+
+	return nil
+end
+
+local function getCharacterTeamFromLeaderboard(characterModel, targetPlayer, loreName)
+	local playerGui = localPlayer:FindFirstChild("PlayerGui")
+	if not playerGui or not characterModel then
+		return nil
+	end
+
+	local possibleRowNames = {}
+	if targetPlayer then
+		possibleRowNames[#possibleRowNames + 1] = "Player_" .. targetPlayer.Name
+	end
+	possibleRowNames[#possibleRowNames + 1] = "Player_" .. characterModel.Name
+
+	for _, rowName in ipairs(possibleRowNames) do
+		if rowName then
+			local row = playerGui:FindFirstChild(rowName, true)
+			local teamName = findTeamNameFromLeaderboardRow(row)
+			if teamName then
+				return teamName
+			end
+		end
+	end
+
+	local targetLoreName = loreName or characterModel:GetAttribute("LoreName")
+	if targetLoreName ~= nil and tostring(targetLoreName) ~= "" then
+		targetLoreName = tostring(targetLoreName)
+
+		for _, object in ipairs(playerGui:GetDescendants()) do
+			if object.Name == "PlayerName" and readTextOrValue(object) == targetLoreName then
+				local row = object:FindFirstAncestorWhichIsA("Frame")
+				local teamName = findTeamNameFromLeaderboardRow(row)
+				if teamName then
+					return teamName
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function getCharacterTeam(targetPlayer, characterModel)
+	local uiTeam = getCharacterTeamFromLeaderboard(characterModel, targetPlayer)
+	if uiTeam then
+		return uiTeam
+	end
+
+	if targetPlayer then
+		local playerTeam = getPlayerTeam(targetPlayer)
+		if playerTeam then
+			return playerTeam
+		end
+	end
+
+	if characterModel then
+		for _, attributeName in ipairs({ "Team", "Faction", "Regiment" }) do
+			local value = characterModel:GetAttribute(attributeName)
+			if value ~= nil and tostring(value) ~= "" then
+				return tostring(value)
+			end
+		end
+
+		for _, object in ipairs(characterModel:GetDescendants()) do
+			local name = object.Name:lower()
+			if name:find("team") or name:find("faction") or name:find("regiment") then
+				local value = readTextOrValue(object)
+				if value then
+					return value
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function isSameTeam(playerA, playerB, characterModelB)
+	local teamA = getPlayerTeam(playerA) or getLocalProfileBranch()
+	local teamB = getCharacterTeamFromLeaderboard(characterModelB, playerB) or getCharacterTeam(playerB, characterModelB)
 	return teamA and teamB and teamA == teamB
 end
 
@@ -1337,7 +1501,7 @@ local function getClosestPlayerToMouse()
 			local targetPlayer = Players:FindFirstChild(charModel.Name)
 			local humanoid = charModel:FindFirstChildOfClass("Humanoid")
 			local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
-			if targetPlayer and not (Config.AimAssistTeamCheck and isSameTeam(localPlayer, targetPlayer)) and targetPart and humanoid and humanoid.Health > 0 then
+			if not (Config.AimAssistTeamCheck and isSameTeam(localPlayer, targetPlayer, charModel)) and targetPart and humanoid and humanoid.Health > 0 then
 				local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
 				if onScreen then
 					local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
@@ -1352,181 +1516,134 @@ local function getClosestPlayerToMouse()
 	return closestPart
 end
 
-local espNameCache = {}
-local espClientFramework
-local espClientFrameworkChecked = false
-local espTracked = {}
-local espIndex = 1
-local espAccumulator = 0
-local espStarted = false
-
-local function getESPClientFramework()
-	if espClientFrameworkChecked then
-		return espClientFramework
-	end
-	espClientFrameworkChecked = true
-	local frameworkFile = ReplicatedStorage:FindFirstChild("ClientFramework")
-	if frameworkFile then
-		local success, framework = pcall(require, frameworkFile)
-		if success then
-			espClientFramework = framework
-		end
-	end
-	return espClientFramework
-end
-
-local function huntTrueLoreName(targetPlayer, characterModel)
-	if espNameCache[targetPlayer.Name] then
-		return espNameCache[targetPlayer.Name]
-	end
-	local framework = getESPClientFramework()
-	if framework and framework.ClientData then
-		local ok, data = pcall(framework.ClientData)
-		if ok and data and data.Profiles and data.Profiles[targetPlayer.Name] then
-			local profile = data.Profiles[targetPlayer.Name]
-			if profile.FirstName or profile.LastName then
-				local foundName = string.format("%s %s", profile.FirstName or "", profile.LastName or "")
-				espNameCache[targetPlayer.Name] = foundName
-				return foundName
-			end
-		end
-	end
-	local attributes = characterModel:GetAttributes()
-	if attributes.FirstName or attributes.LastName then
-		local foundName = string.format("%s %s", attributes.FirstName or "", attributes.LastName or "")
-		espNameCache[targetPlayer.Name] = foundName
-		return foundName
-	end
-	for _, object in ipairs(characterModel:GetDescendants()) do
-		if object:IsA("StringValue") and (object.Name:lower():find("name") or object.Name:lower():find("rp")) and object.Value ~= "" and object.Value ~= targetPlayer.Name then
-			espNameCache[targetPlayer.Name] = object.Value
-			return object.Value
-		end
-	end
-	local first = targetPlayer:GetAttribute("FirstName")
-	local last = targetPlayer:GetAttribute("LastName")
-	if (first and first ~= "") or (last and last ~= "") then
-		local foundName = string.format("%s %s", first or "", last or "")
-		espNameCache[targetPlayer.Name] = foundName
-		return foundName
-	end
-	return nil
-end
+local World = workspace:WaitForChild("World", 5)
+local TARGET_ESP_FOLDER = World and World:WaitForChild("Characters", 5)
+local PlayerESPStarted = false
 
 local function removePlayerESP(characterModel)
-	local existing = characterModel and characterModel:FindFirstChild("DevESP_UI")
-	if existing then
-		existing:Destroy()
+	local ui = characterModel and characterModel:FindFirstChild("DevESP_UI", true)
+	if ui then
+		ui:Destroy()
 	end
-	espTracked[characterModel] = nil
 end
 
-local function getOrCreatePlayerESP(characterModel, head)
-	local billboard = characterModel:FindFirstChild("DevESP_UI")
-	if not billboard then
-		billboard = Instance.new("BillboardGui")
-		billboard.Name = "DevESP_UI"
-		billboard.Size = UDim2.new(0, 400, 0, 50)
-		billboard.AlwaysOnTop = true
-		billboard.StudsOffset = Vector3.new(0, 3, 0)
-		billboard.Adornee = head
-		local textLabel = Instance.new("TextLabel")
-		textLabel.Name = "ESPLabel"
-		textLabel.Size = UDim2.new(1, 0, 1, 0)
-		textLabel.BackgroundTransparency = 1
-		textLabel.TextSize = 14
-		textLabel.Font = Enum.Font.GothamBold
-		textLabel.TextStrokeTransparency = 0
-		textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-		textLabel.Parent = billboard
-		billboard.Parent = characterModel
+local function createPlayerESP(characterModel)
+	if not Config.PlayerESPEnabled then
+		removePlayerESP(characterModel)
+		return
 	end
-	billboard.Adornee = head
-	return billboard, billboard:FindFirstChild("ESPLabel")
+
+	if not characterModel or not characterModel:IsA("Model") or characterModel == localPlayer.Character then
+		return
+	end
+
+	if characterModel:FindFirstChild("DevESP_UI", true) then
+		return
+	end
+
+	local head = characterModel:FindFirstChild("Head")
+	if not head then
+		return
+	end
+
+	local bGui = Instance.new("BillboardGui")
+	bGui.Name = "DevESP_UI"
+	bGui.Size = UDim2.new(0, 250, 0, 50)
+	bGui.AlwaysOnTop = true
+	bGui.StudsOffset = Vector3.new(0, 3, 0)
+	bGui.Adornee = head
+	bGui.Enabled = true
+
+	local label = Instance.new("TextLabel")
+	label.Name = "ESPLabel"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextSize = 14
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeTransparency = 0
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.Text = "Loading..."
+	label.Parent = bGui
+
+	bGui.Parent = head
 end
 
 local function updatePlayerESP(characterModel)
-	if not Config.PlayerESPEnabled or not characterModel:IsA("Model") or characterModel == localPlayer.Character then
+	if not Config.PlayerESPEnabled then
 		removePlayerESP(characterModel)
 		return
 	end
-	local targetPlayer = Players:FindFirstChild(characterModel.Name)
-	local head = characterModel:FindFirstChild("Head")
+
+	local myCharacter = localPlayer.Character
+	if not characterModel or not characterModel:IsA("Model") or characterModel == myCharacter then
+		return
+	end
+
+	createPlayerESP(characterModel)
+
+	local myHrp = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
 	local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
-	if not targetPlayer or not head or not humanoid or humanoid.Health <= 0 then
-		removePlayerESP(characterModel)
-		return
+	local hrp = characterModel:FindFirstChild("HumanoidRootPart")
+	local bGui = characterModel:FindFirstChild("DevESP_UI", true)
+	local label = bGui and bGui:FindFirstChild("ESPLabel")
+
+	if label and humanoid and hrp then
+		local distance = 0
+		if myHrp then
+			distance = math.floor((hrp.Position - myHrp.Position).Magnitude)
+		end
+
+		local health = math.max(0, math.floor(humanoid.Health))
+		label.Text = string.format("%s | HP: %d | %ds", characterModel.Name, health, distance)
 	end
-	local root = characterModel:FindFirstChild("HumanoidRootPart")
-	local localRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-	local distance = 0
-	if root and localRoot then
-		distance = math.floor((root.Position - localRoot.Position).Magnitude)
-	end
-	if Config.PlayerESPDistanceEnabled and distance > Config.PlayerESPMaxDistance then
-		removePlayerESP(characterModel)
-		return
-	end
-	local loreName = huntTrueLoreName(targetPlayer, characterModel)
-	local displayLore = loreName and string.format("(%s)", loreName) or "(???)"
-	local faction = getPlayerTeam(targetPlayer) or "Civilian"
-	local billboard, textLabel = getOrCreatePlayerESP(characterModel, head)
-	if textLabel then
-		textLabel.Text = string.format("%s | %s | HP: %d | %ds | %s", targetPlayer.Name, displayLore, math.floor(humanoid.Health), distance, faction)
-		textLabel.TextColor3 = faction == "Staff Team" and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(255, 255, 255)
-	end
-	espTracked[characterModel] = billboard
 end
 
 local function clearPlayerESP()
-	for characterModel in pairs(espTracked) do
-		removePlayerESP(characterModel)
+	if not TARGET_ESP_FOLDER then
+		return
 	end
-	local charactersFolder = getCharactersFolder()
-	if charactersFolder then
-		for _, characterModel in ipairs(charactersFolder:GetChildren()) do
-			removePlayerESP(characterModel)
-		end
+
+	for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
+		removePlayerESP(character)
+	end
+end
+
+local function scanPlayerESP()
+	if not TARGET_ESP_FOLDER then
+		return
+	end
+
+	for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
+		task.spawn(updatePlayerESP, character)
 	end
 end
 
 local function startPlayerESP()
-	if espStarted then
+	if PlayerESPStarted or not TARGET_ESP_FOLDER then
 		return
 	end
-	espStarted = true
-	RunService.RenderStepped:Connect(function(deltaTime)
+
+	PlayerESPStarted = true
+	RunService.RenderStepped:Connect(function()
 		if not Config.PlayerESPEnabled then
-			if next(espTracked) then
-				clearPlayerESP()
-			end
 			return
 		end
-		espAccumulator = espAccumulator + deltaTime
-		local updateRate = Config.PlayerESPOptimized and Config.PlayerESPUpdateRate or 0.05
-		if espAccumulator < updateRate then
-			return
-		end
-		espAccumulator = 0
-		local charactersFolder = getCharactersFolder()
-		if not charactersFolder then
-			clearPlayerESP()
-			return
-		end
-		local characters = charactersFolder:GetChildren()
-		local batchSize = Config.PlayerESPOptimized and 20 or #characters
-		for index = 1, math.min(batchSize, #characters) do
-			if espIndex > #characters then
-				espIndex = 1
-			end
-			updatePlayerESP(characters[espIndex])
-			espIndex = espIndex + 1
+
+		for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
+			task.spawn(updatePlayerESP, character)
 		end
 	end)
-	local charactersFolderForESP = getCharactersFolder()
-	if charactersFolderForESP then
-		charactersFolderForESP.ChildRemoving:Connect(removePlayerESP)
-	end
+
+	TARGET_ESP_FOLDER.ChildRemoving:Connect(function(child)
+		removePlayerESP(child)
+	end)
+
+	TARGET_ESP_FOLDER.ChildAdded:Connect(function(child)
+		task.delay(0.5, function()
+			updatePlayerESP(child)
+		end)
+	end)
 end
 
 if not Config.AimAssistHookActive then
@@ -1888,14 +2005,24 @@ local function createToggle(parent, y, text, getter, setter)
 	})
 	addCorner(button, 9)
 	local function refresh()
-		local enabled = getter()
+		local ok, enabled = pcall(getter)
+		if not ok then
+			enabled = false
+		end
 		button.Text = enabled and "ON" or "OFF"
 		TweenService:Create(button, TweenInfo.new(0.14), {
 			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
 		}):Play()
 	end
 	button.MouseButton1Click:Connect(function()
-		setter(not getter())
+		local ok, current = pcall(getter)
+		if not ok then
+			current = false
+		end
+		local success, err = pcall(setter, not current)
+		if not success then
+			warn("[Toggle Error]", text, err)
+		end
 		refresh()
 	end)
 	refresh()
@@ -2198,35 +2325,17 @@ end, function(value)
 end)
 end
 
-local playerESPCard = createCard(visualPage, "Player ESP", 246)
+local playerESPCard = createCard(visualPage, "Player ESP", 94)
 createToggle(playerESPCard, 50, "Enable Player ESP", function()
 	return Config.PlayerESPEnabled
 end, function(value)
 	Config.PlayerESPEnabled = value
 	if not value then
 		clearPlayerESP()
+	else
+		startPlayerESP()
+		scanPlayerESP()
 	end
-end)
-createToggle(playerESPCard, 88, "Use Distance Limit", function()
-	return Config.PlayerESPDistanceEnabled
-end, function(value)
-	Config.PlayerESPDistanceEnabled = value
-end)
-createTextBox(playerESPCard, 126, "Max Distance", Config.PlayerESPMaxDistance, function(text, box)
-	local value = tonumber(text)
-	if value and value > 0 then
-		Config.PlayerESPMaxDistance = value
-	end
-	box.Text = tostring(Config.PlayerESPMaxDistance)
-end)
-createToggle(playerESPCard, 164, "Optimization Mode", function()
-	return Config.PlayerESPOptimized
-end, function(value)
-	Config.PlayerESPOptimized = value
-end)
-createTextBox(playerESPCard, 202, "Update Rate", Config.PlayerESPUpdateRate, function(text, box)
-	Config.PlayerESPUpdateRate = math.clamp(tonumber(text) or Config.PlayerESPUpdateRate, 0.05, 2)
-	box.Text = tostring(Config.PlayerESPUpdateRate)
 end)
 
 local traitsCard = createCard(otherPage, "Traits", 94)
