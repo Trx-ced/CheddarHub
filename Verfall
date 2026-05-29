@@ -79,6 +79,7 @@ _G.UI_Config = _G.UI_Config or {
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = false,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
+	NoTalentCooldownEnabled = false,
 	BladeModsEnabled = false,
 	BladeTitanMultiplierEnabled = true,
 	BladeHumanMultiplierEnabled = true,
@@ -140,6 +141,7 @@ Config.RawBandageHealAmount = tonumber(Config.RawBandageHealAmount) or 25
 Config.RawBandageKey = Config.RawBandageKey or Enum.KeyCode.V
 Config.BandageRemovalMacroEnabled = Config.BandageRemovalMacroEnabled == true
 Config.BandageRemovalMacroKey = Config.BandageRemovalMacroKey or Enum.KeyCode.N
+Config.NoTalentCooldownEnabled = Config.NoTalentCooldownEnabled == true
 Config.BladeModsEnabled = Config.BladeModsEnabled == true
 Config.BladeTitanMultiplierEnabled = Config.BladeTitanMultiplierEnabled ~= false
 Config.BladeHumanMultiplierEnabled = Config.BladeHumanMultiplierEnabled ~= false
@@ -1024,28 +1026,35 @@ local function installBladeMods()
 			bladeMods.Target = obj
 			bladeMods.OriginalOnHit = obj.__CheddarOriginalOnHit
 
-			if obj.OnHit ~= obj.__CheddarWrappedOnHit then
+			if obj.OnHit ~= obj.__CheddarWrappedOnHit or obj.__CheddarWrappedOnHitVersion ~= 2 then
 				obj.__CheddarWrappedOnHit = function(self, target, hitPart, enemyType, ...)
 					if not Config.BladeModsEnabled then
 						return obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
 					end
 
-					local baseDamage = self.Damage
-					if type(baseDamage) == "number" then
+					if self.UnmodifiedBaseDamage == nil then
+						self.UnmodifiedBaseDamage = self.Damage
+					end
+
+					local trueBase = self.UnmodifiedBaseDamage
+					if type(trueBase) == "number" then
 						if (enemyType == "Titan" or enemyType == "TitanDummy") and Config.BladeTitanMultiplierEnabled then
-							self.Damage = baseDamage * math.max(tonumber(Config.BladeTitanMultiplier) or 1, 1)
+							self.Damage = trueBase * math.max(tonumber(Config.BladeTitanMultiplier) or 1, 1)
 						elseif enemyType == "Human" and Config.BladeHumanMultiplierEnabled then
-							self.Damage = baseDamage * math.max(tonumber(Config.BladeHumanMultiplier) or 1, 1)
+							self.Damage = trueBase * math.max(tonumber(Config.BladeHumanMultiplier) or 1, 1)
+						else
+							self.Damage = trueBase
 						end
 					end
 
 					local results = table.pack(pcall(obj.__CheddarOriginalOnHit, self, target, hitPart, enemyType, ...))
-					self.Damage = baseDamage
+					self.Damage = trueBase
 					if not results[1] then
 						error(results[2])
 					end
 					return unpack(results, 2, results.n)
 				end
+				obj.__CheddarWrappedOnHitVersion = 2
 				obj.OnHit = obj.__CheddarWrappedOnHit
 			end
 
@@ -1053,6 +1062,45 @@ local function installBladeMods()
 			break
 		end
 	end
+end
+
+local talentCooldowns = {
+	Running = false,
+}
+
+local function startNoTalentCooldownLoop()
+	if talentCooldowns.Running then
+		return
+	end
+
+	talentCooldowns.Running = true
+	task.spawn(function()
+		local success, clientFramework = pcall(function()
+			return require(ReplicatedStorage:WaitForChild("ClientFramework", 5))
+		end)
+
+		if not success or not clientFramework then
+			talentCooldowns.Running = false
+			return
+		end
+
+		local playerObject = clientFramework.PlayerObject
+		while Config.NoTalentCooldownEnabled and not playerObject do
+			task.wait(0.5)
+			playerObject = clientFramework.PlayerObject
+		end
+
+		while Config.NoTalentCooldownEnabled do
+			if playerObject and playerObject.Cooldowns and type(playerObject.ResetAllCooldowns) == "function" then
+				pcall(function()
+					playerObject:ResetAllCooldowns(true)
+				end)
+			end
+			task.wait(0.1)
+		end
+
+		talentCooldowns.Running = false
+	end)
 end
 
 local function disableFallDamageLoop()
@@ -2114,6 +2162,16 @@ end, function(value)
 	end
 end)
 
+local talentCooldownCard = createCard(mainPage, "No Talent CD", 86)
+createToggle(talentCooldownCard, 48, "Enable No Talent CD", function()
+	return Config.NoTalentCooldownEnabled
+end, function(value)
+	Config.NoTalentCooldownEnabled = value
+	if value then
+		startNoTalentCooldownLoop()
+	end
+end)
+
 local attrCard = createCard(attrPage, "Attribute Controls", 92)
 createToggle(attrCard, 50, "Enable Attribute Mods", function()
 	return Config.AttributesEnabled
@@ -2549,6 +2607,10 @@ end)
 
 if Config.BladeModsEnabled then
 	task.spawn(installBladeMods)
+end
+
+if Config.NoTalentCooldownEnabled then
+	startNoTalentCooldownLoop()
 end
 
 switchPage("Main")
