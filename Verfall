@@ -20,7 +20,7 @@ _G.UI_Config = _G.UI_Config or {
 	EyeOffset = Vector3.new(0, 7, 0),
 	NullifyEnabled = true,
 	AttributesEnabled = true,
-	ODMGAttributesEnabled = false,
+	ODMGAttributesEnabled = true,
 	CustomStats = {
 		FirearmRange = 1200,
 		GasConservation = 0.5,
@@ -78,11 +78,11 @@ _G.UI_Config = _G.UI_Config or {
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = true,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
-	BladeModsEnabled = false,
+	BladeModsEnabled = true,
 	BladeTitanMultiplierEnabled = true,
 	BladeHumanMultiplierEnabled = true,
-	BladeTitanMultiplier = 2,
-	BladeHumanMultiplier = 1.5,
+	BladeTitanMultiplier = 5,
+	BladeHumanMultiplier = 2,
 }
 
 local Config = _G.UI_Config
