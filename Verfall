@@ -20,24 +20,24 @@ _G.UI_Config = _G.UI_Config or {
 	EyeOffset = Vector3.new(0, 7, 0),
 	NullifyEnabled = true,
 	AttributesEnabled = true,
-	ODMGAttributesEnabled = true,
+	ODMGAttributesEnabled = false,
 	CustomStats = {
-		FirearmRange = 500,
+		FirearmRange = 1200,
 		GasConservation = 0.5,
-		MeleeDamage = 50,
-		OdmHookVeloGain = 2,
+		MeleeDamage = 6,
+		OdmHookVeloGain = 3,
 		OdmPassiveVeloGain = 2,
-		OdmVeloCap = 300,
-		PlayerCritChance = 1000,
-		ReloadSpeed = 1.5,
+		OdmVeloCap = 250,
+		PlayerCritChance = 10,
+		ReloadSpeed = 1.65,
 		RunSpeed = 9,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
-		TitanMultiplier = 10,
+		TitanMultiplier = 0,
 		VelocityScaling = 1,
 	},
-	BandageEnabled = true,
+	BandageEnabled = false,
 	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
 	VelocityCapperEnabled = true,
@@ -48,7 +48,7 @@ _G.UI_Config = _G.UI_Config or {
 	TextureImage = DEFAULT_TEXTURE_IMAGE,
 	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 10,
+	DamageMultiplier = 3,
 	NoRecoilEnabled = true,
 	MeleeHitMultiplierEnabled = true,
 	MeleeHitMultiplier = 3,
@@ -65,7 +65,7 @@ _G.UI_Config = _G.UI_Config or {
 	PlayerESPUpdateRate = 0.25,
 	RemoveTraitsEnabled = true,
 	InfHorseStamEnabled = true,
-	MusketBullseyeEnabled = true,
+	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
 	TitanDummyHitboxEnabled = false,
@@ -74,13 +74,15 @@ _G.UI_Config = _G.UI_Config or {
 	TitanDummyStatusEnabled = false,
 	TitanDummyShowEnabled = false,
 	RawBandageEnabled = true,
-	RawBandageHealAmount = 40,
+	RawBandageHealAmount = 35,
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = true,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
 	BladeModsEnabled = false,
-	BladeDamageMultiplier = 3,
-	BladeInfiniteDurabilityEnabled = false,
+	BladeTitanMultiplierEnabled = true,
+	BladeHumanMultiplierEnabled = true,
+	BladeTitanMultiplier = 2,
+	BladeHumanMultiplier = 1.5,
 }
 
 local Config = _G.UI_Config
@@ -137,8 +139,10 @@ Config.RawBandageKey = Config.RawBandageKey or Enum.KeyCode.V
 Config.BandageRemovalMacroEnabled = Config.BandageRemovalMacroEnabled == true
 Config.BandageRemovalMacroKey = Config.BandageRemovalMacroKey or Enum.KeyCode.N
 Config.BladeModsEnabled = Config.BladeModsEnabled == true
-Config.BladeDamageMultiplier = math.max(tonumber(Config.BladeDamageMultiplier) or 3, 1)
-Config.BladeInfiniteDurabilityEnabled = Config.BladeInfiniteDurabilityEnabled ~= false
+Config.BladeTitanMultiplierEnabled = Config.BladeTitanMultiplierEnabled ~= false
+Config.BladeHumanMultiplierEnabled = Config.BladeHumanMultiplierEnabled ~= false
+Config.BladeTitanMultiplier = math.max(tonumber(Config.BladeTitanMultiplier) or 50, 1)
+Config.BladeHumanMultiplier = math.max(tonumber(Config.BladeHumanMultiplier) or 1.5, 1)
 
 local movementAttributes = {
 	OdmHookVeloGain = true,
@@ -998,112 +1002,55 @@ local function executeBandageRemoval()
 end
 
 local bladeMods = {
-	Installed = false,
-	BladeClass = nil,
-	OriginalNew = nil,
-	OriginalCalculateDura = nil,
-	OriginalClashed = nil,
+	Patched = false,
+	Target = nil,
+	OriginalOnHit = nil,
 }
 
-local function applyBladeInstanceMods(instance)
-	if not instance or not Config.BladeModsEnabled then
-		return instance
-	end
-
-	local multiplier = math.max(tonumber(Config.BladeDamageMultiplier) or 1, 1)
-
-	if type(instance.Damage) == "number" then
-		if instance.__CheddarBaseDamage == nil then
-			instance.__CheddarBaseDamage = instance.Damage
-		end
-		instance.Damage = instance.__CheddarBaseDamage * multiplier
-	end
-
-	if Config.BladeInfiniteDurabilityEnabled then
-		instance.MaxDurability = 999999
-		instance.Durability = 999999
-		if type(instance.UpdateDurability) == "function" then
-			pcall(function()
-				instance:UpdateDurability()
-			end)
-		end
-	end
-
-	return instance
-end
-
 local function installBladeMods()
-	if bladeMods.Installed then
+	if bladeMods.Patched then
 		return
 	end
 
-	local clientFramework = ReplicatedStorage:WaitForChild("ClientFramework", 5)
-	local classes = clientFramework and clientFramework:WaitForChild("Classes", 5)
-	local odmClass = classes and classes:WaitForChild("OdmClass", 5)
-	local subClasses = odmClass and odmClass:WaitForChild("SubClasses", 5)
-	local bladeClassModule = subClasses and subClasses:WaitForChild("BladeClass", 5)
-
-	if not bladeClassModule then
+	if type(getgc) ~= "function" then
 		return
 	end
 
-	local success, bladeClass = pcall(require, bladeClassModule)
-	if not success or type(bladeClass) ~= "table" then
-		return
-	end
+	for _, obj in pairs(getgc(true)) do
+		if type(obj) == "table" and rawget(obj, "OnHit") and rawget(obj, "CalculateDura") and type(obj.OnHit) == "function" then
+			obj.__CheddarOriginalOnHit = obj.__CheddarOriginalOnHit or obj.OnHit
+			bladeMods.Target = obj
+			bladeMods.OriginalOnHit = obj.__CheddarOriginalOnHit
 
-	bladeMods.BladeClass = bladeClass
-
-	if type(bladeClass.New) == "function" then
-		bladeClass.__CheddarOriginalNew = bladeClass.__CheddarOriginalNew or bladeClass.New
-		bladeMods.OriginalNew = bladeClass.__CheddarOriginalNew
-		if bladeClass.New ~= bladeClass.__CheddarWrappedNew then
-			bladeClass.__CheddarWrappedNew = function(...)
-				return applyBladeInstanceMods(bladeClass.__CheddarOriginalNew(...))
-			end
-			bladeClass.New = bladeClass.__CheddarWrappedNew
-		end
-	end
-
-	if type(bladeClass.CalculateDura) == "function" then
-		bladeClass.__CheddarOriginalCalculateDura = bladeClass.__CheddarOriginalCalculateDura or bladeClass.CalculateDura
-		bladeMods.OriginalCalculateDura = bladeClass.__CheddarOriginalCalculateDura
-		if bladeClass.CalculateDura ~= bladeClass.__CheddarWrappedCalculateDura then
-			bladeClass.__CheddarWrappedCalculateDura = function(self, ...)
-				if Config.BladeModsEnabled and Config.BladeInfiniteDurabilityEnabled then
-					self.MaxDurability = 999999
-					self.Durability = 999999
-					if type(self.UpdateDurability) == "function" then
-						self:UpdateDurability()
+			if obj.OnHit ~= obj.__CheddarWrappedOnHit then
+				obj.__CheddarWrappedOnHit = function(self, target, hitPart, enemyType, ...)
+					if not Config.BladeModsEnabled then
+						return obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
 					end
-					return
-				end
-				return bladeClass.__CheddarOriginalCalculateDura(self, ...)
-			end
-			bladeClass.CalculateDura = bladeClass.__CheddarWrappedCalculateDura
-		end
-	end
 
-	if type(bladeClass.Clashed) == "function" then
-		bladeClass.__CheddarOriginalClashed = bladeClass.__CheddarOriginalClashed or bladeClass.Clashed
-		bladeMods.OriginalClashed = bladeClass.__CheddarOriginalClashed
-		if bladeClass.Clashed ~= bladeClass.__CheddarWrappedClashed then
-			bladeClass.__CheddarWrappedClashed = function(self, ...)
-				if Config.BladeModsEnabled and Config.BladeInfiniteDurabilityEnabled then
-					self.MaxDurability = 999999
-					self.Durability = 999999
-					if type(self.UpdateDurability) == "function" then
-						self:UpdateDurability()
+					local baseDamage = self.Damage
+					if type(baseDamage) == "number" then
+						if (enemyType == "Titan" or enemyType == "TitanDummy") and Config.BladeTitanMultiplierEnabled then
+							self.Damage = baseDamage * math.max(tonumber(Config.BladeTitanMultiplier) or 1, 1)
+						elseif enemyType == "Human" and Config.BladeHumanMultiplierEnabled then
+							self.Damage = baseDamage * math.max(tonumber(Config.BladeHumanMultiplier) or 1, 1)
+						end
 					end
-					return
+
+					local results = table.pack(pcall(obj.__CheddarOriginalOnHit, self, target, hitPart, enemyType, ...))
+					self.Damage = baseDamage
+					if not results[1] then
+						error(results[2])
+					end
+					return unpack(results, 2, results.n)
 				end
-				return bladeClass.__CheddarOriginalClashed(self, ...)
+				obj.OnHit = obj.__CheddarWrappedOnHit
 			end
-			bladeClass.Clashed = bladeClass.__CheddarWrappedClashed
+
+			bladeMods.Patched = true
+			break
 		end
 	end
-
-	bladeMods.Installed = true
 end
 
 local function disableFallDamageLoop()
@@ -2441,7 +2388,7 @@ end, function(value)
 end)
 createButton(bandageRemovalMacroCard, 126, "Run Removal", executeBandageRemoval)
 
-local bladeModsCard = createCard(overpoweredPage, "Blade Mods", 170)
+local bladeModsCard = createCard(overpoweredPage, "Blade Mods", 246)
 createToggle(bladeModsCard, 50, "Enable Blade Mods", function()
 	return Config.BladeModsEnabled
 end, function(value)
@@ -2450,17 +2397,32 @@ end, function(value)
 		task.spawn(installBladeMods)
 	end
 end)
-createTextBox(bladeModsCard, 88, "Damage Multiplier", Config.BladeDamageMultiplier, function(text, box)
-	Config.BladeDamageMultiplier = math.max(tonumber(text) or Config.BladeDamageMultiplier, 1)
-	box.Text = tostring(Config.BladeDamageMultiplier)
+createToggle(bladeModsCard, 88, "Enable Titan Mult", function()
+	return Config.BladeTitanMultiplierEnabled
+end, function(value)
+	Config.BladeTitanMultiplierEnabled = value
 	if Config.BladeModsEnabled then
 		task.spawn(installBladeMods)
 	end
 end)
-createToggle(bladeModsCard, 126, "Infinite Durability", function()
-	return Config.BladeInfiniteDurabilityEnabled
+createTextBox(bladeModsCard, 126, "Titan Damage Mult", Config.BladeTitanMultiplier, function(text, box)
+	Config.BladeTitanMultiplier = math.max(tonumber(text) or Config.BladeTitanMultiplier, 1)
+	box.Text = tostring(Config.BladeTitanMultiplier)
+	if Config.BladeModsEnabled then
+		task.spawn(installBladeMods)
+	end
+end)
+createToggle(bladeModsCard, 164, "Enable Human Mult", function()
+	return Config.BladeHumanMultiplierEnabled
 end, function(value)
-	Config.BladeInfiniteDurabilityEnabled = value
+	Config.BladeHumanMultiplierEnabled = value
+	if Config.BladeModsEnabled then
+		task.spawn(installBladeMods)
+	end
+end)
+createTextBox(bladeModsCard, 202, "Human Damage Mult", Config.BladeHumanMultiplier, function(text, box)
+	Config.BladeHumanMultiplier = math.max(tonumber(text) or Config.BladeHumanMultiplier, 1)
+	box.Text = tostring(Config.BladeHumanMultiplier)
 	if Config.BladeModsEnabled then
 		task.spawn(installBladeMods)
 	end
