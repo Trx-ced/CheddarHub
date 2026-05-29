@@ -5,68 +5,76 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
+local HttpService = game:GetService("HttpService")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
-local DEFAULT_TEXTURE_IMAGE = "rbxassetid://85751012991412"
-local DEFAULT_TEXTURE_TRANSPARENCY = 0.74
 
 _G.UI_Config = _G.UI_Config or {
-	NapeEnabled = true,
+	NapeEnabled = false,
 	NapeSize = Vector3.new(20, 20, 20),
 	NapeOffset = Vector3.new(0, 4, 5),
-	EyeEnabled = true,
+	EyeEnabled = false,
 	EyeSize = Vector3.new(13, 13, 13),
 	EyeOffset = Vector3.new(0, 7, 0),
-	NullifyEnabled = true,
-	AttributesEnabled = true,
-	ODMGAttributesEnabled = true,
+	NullifyEnabled = false,
+	AttributesEnabled = false,
+	ODMGAttributesEnabled = false,
 	MovementSafeVersion = 2,
 	CustomStats = {
-		FirearmRange = 1200,
+		FirearmRange = 500,
 		GasConservation = 0.5,
-		MeleeDamage = 6,
-		OdmHookVeloGain = 3,
+		MeleeDamage = 5000,
+		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
-		OdmVeloCap = 250,
-		PlayerCritChance = 100,
-		ReloadSpeed = 1.65,
-		RunSpeed = 9,
+		OdmVeloCap = 300,
+		PlayerCritChance = 1000,
+		ReloadSpeed = 1.5,
+		RunSpeed = 1,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
 		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
-	BandageEnabled = true,
+	CustomStatsEnabled = {
+		FirearmRange = false,
+		GasConservation = false,
+		OdmHookVeloGain = false,
+		OdmPassiveVeloGain = false,
+		OdmVeloCap = false,
+		ReloadSpeed = false,
+		RunSpeed = false,
+		VelocityScaling = false,
+	},
+	BandageEnabled = false,
 	BandageRemovalEnabled = false,
-	NoFallDamageEnabled = true,
-	TemperatureNullifierEnabled = true,
-	VelocityCapperEnabled = true,
+	NoFallDamageEnabled = false,
+	TemperatureNullifierEnabled = false,
+	VelocityCapperEnabled = false,
 	SelfHealAmount = 100,
 	OtherHealAmount = 150,
 	RefillKey = Enum.KeyCode.U,
 	ToggleUIKey = Enum.KeyCode.RightShift,
-	TextureImage = DEFAULT_TEXTURE_IMAGE,
-	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
-	DamageMultiplierEnabled = true,
-	DamageMultiplier = 10,
-	NoRecoilEnabled = true,
-	MeleeHitMultiplierEnabled = true,
+	DamageMultiplierEnabled = false,
+	DamageMultiplier = 9999,
+	NoRecoilEnabled = false,
+	MeleeHitMultiplierEnabled = false,
 	MeleeHitMultiplier = 3,
-	AimAssistEnabled = true,
-	AimAssistTeamCheck = true,
-	FOVEnabled = true,
+	AimAssistEnabled = false,
+	AimAssistTeamCheck = false,
+	FOVEnabled = false,
 	FOVRadius = 150,
 	FOVTransparency = 0.5,
-	HideFOV = true,
+	HideFOV = false,
 	PlayerESPEnabled = false,
+	PlayerESPKey = Enum.KeyCode.L,
 	PlayerESPDistanceEnabled = false,
-	PlayerESPMaxDistance = 1500,
-	PlayerESPOptimized = true,
+	PlayerESPMaxDistance = 2000,
+	PlayerESPOptimized = false,
 	PlayerESPUpdateRate = 0.25,
-	RemoveTraitsEnabled = true,
-	InfHorseStamEnabled = true,
+	RemoveTraitsEnabled = false,
+	InfHorseStamEnabled = false,
 	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
@@ -75,69 +83,336 @@ _G.UI_Config = _G.UI_Config or {
 	TitanDummyCountdownEnabled = false,
 	TitanDummyStatusEnabled = false,
 	TitanDummyShowEnabled = false,
-	RawBandageEnabled = true,
+	RawBandageEnabled = false,
 	RawBandageHealAmount = 25,
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = false,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
-	NoTalentCooldownEnabled = true,
-	BladeModsEnabled = true,
-	BladeTitanMultiplierEnabled = true,
-	BladeHumanMultiplierEnabled = true,
+	NoTalentCooldownEnabled = false,
+	BladeModsEnabled = false,
+	BladeTitanMultiplierEnabled = false,
+	BladeHumanMultiplierEnabled = false,
 	BladeTitanMultiplier = 50,
 	BladeHumanMultiplier = 1.5,
+	SelectedConfigName = "default",
+	AutoLoadConfig = false,
 }
 
 local Config = _G.UI_Config
+local syncConfigInputs = function() end
 
-if Config.CheddarPresetVersion ~= 4 then
-	Config.CheddarPresetVersion = 4
-	Config.ODMGAttributesEnabled = true
-	Config.VelocityCapperEnabled = true
+local DEFAULT_DISABLED_CONFIG_KEYS = {
+	"NapeEnabled",
+	"EyeEnabled",
+	"NullifyEnabled",
+	"AttributesEnabled",
+	"ODMGAttributesEnabled",
+	"BandageEnabled",
+	"BandageRemovalEnabled",
+	"NoFallDamageEnabled",
+	"TemperatureNullifierEnabled",
+	"VelocityCapperEnabled",
+	"DamageMultiplierEnabled",
+	"NoRecoilEnabled",
+	"MeleeHitMultiplierEnabled",
+	"AimAssistEnabled",
+	"AimAssistTeamCheck",
+	"FOVEnabled",
+	"HideFOV",
+	"PlayerESPEnabled",
+	"PlayerESPDistanceEnabled",
+	"PlayerESPOptimized",
+	"RemoveTraitsEnabled",
+	"InfHorseStamEnabled",
+	"MusketBullseyeEnabled",
+	"TitanDummyHitboxEnabled",
+	"TitanDummyCountdownEnabled",
+	"TitanDummyStatusEnabled",
+	"TitanDummyShowEnabled",
+	"RawBandageEnabled",
+	"BandageRemovalMacroEnabled",
+	"NoTalentCooldownEnabled",
+	"BladeModsEnabled",
+	"BladeTitanMultiplierEnabled",
+	"BladeHumanMultiplierEnabled",
+}
+
+local function applyDefaultDisabledConfig()
+	for _, key in ipairs(DEFAULT_DISABLED_CONFIG_KEYS) do
+		Config[key] = false
+	end
+end
+
+local CONFIG_FOLDER = "CheddarHub"
+local CONFIG_AUTOSAVE_FILE = CONFIG_FOLDER .. "/autosave.json"
+local CONFIG_MANUAL_FILE = CONFIG_FOLDER .. "/default.json"
+local CONFIG_SETTINGS_FILE = CONFIG_FOLDER .. "/settings.json"
+
+local function shouldSaveConfigKey(key)
+	if typeof(key) ~= "string" then
+		return false
+	end
+	if key == "SelectedConfigName" or key == "AutoLoadConfig" then
+		return false
+	end
+	return not key:find("Hook") and not key:find("Modified")
+end
+
+local function sanitizeConfigName(name)
+	name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	name = name:gsub("[^%w_%-%s]", ""):gsub("%s+", "_")
+	if name == "" then
+		name = "default"
+	end
+	return name
+end
+
+local function getNamedConfigFile(name)
+	return CONFIG_FOLDER .. "/" .. sanitizeConfigName(name) .. ".json"
+end
+
+local function getSavedConfigNames()
+	local names = {}
+	if not listfiles or not isfolder or not isfolder(CONFIG_FOLDER) then
+		return names
+	end
+
+	local success, files = pcall(listfiles, CONFIG_FOLDER)
+	if not success or typeof(files) ~= "table" then
+		return names
+	end
+
+	for _, filePath in ipairs(files) do
+		local fileName = tostring(filePath):match("[^/\\]+$")
+		local name = fileName and fileName:match("^(.*)%.json$")
+		if name and name ~= "autosave" and name ~= "settings" then
+			table.insert(names, name)
+		end
+	end
+	table.sort(names)
+	return names
+end
+
+local function encodeConfigValue(value)
+	local valueType = typeof(value)
+
+	if valueType == "Vector3" then
+		return {
+			__type = "Vector3",
+			x = value.X,
+			y = value.Y,
+			z = value.Z,
+		}
+	end
+
+	if valueType == "EnumItem" then
+		local enumType, enumName = tostring(value):match("^Enum%.([^%.]+)%.(.+)$")
+		return {
+			__type = "EnumItem",
+			enumType = enumType,
+			enumName = enumName,
+		}
+	end
+
+	if valueType == "table" then
+		local encoded = {}
+		for key, item in pairs(value) do
+			encoded[key] = encodeConfigValue(item)
+		end
+		return encoded
+	end
+
+	if valueType == "boolean" or valueType == "number" or valueType == "string" then
+		return value
+	end
+
+	return nil
+end
+
+local function decodeConfigValue(value)
+	if typeof(value) ~= "table" then
+		return value
+	end
+
+	if value.__type == "Vector3" then
+		return Vector3.new(tonumber(value.x) or 0, tonumber(value.y) or 0, tonumber(value.z) or 0)
+	end
+
+	if value.__type == "EnumItem" then
+		local enumType = value.enumType and Enum[value.enumType]
+		if enumType and value.enumName and enumType[value.enumName] then
+			return enumType[value.enumName]
+		end
+		return nil
+	end
+
+	local decoded = {}
+	for key, item in pairs(value) do
+		decoded[key] = decodeConfigValue(item)
+	end
+	return decoded
+end
+
+local function mergeConfig(target, saved)
+	for key, value in pairs(saved) do
+		local decoded = decodeConfigValue(value)
+		if typeof(decoded) == "table" and typeof(target[key]) == "table" and decoded.__type == nil then
+			mergeConfig(target[key], decoded)
+		elseif decoded ~= nil then
+			target[key] = decoded
+		end
+	end
+end
+
+local function buildSavedConfig(source)
+	local saved = {}
+	for key, value in pairs(source) do
+		if shouldSaveConfigKey(key) then
+			local encoded = encodeConfigValue(value)
+			if encoded ~= nil then
+				saved[key] = encoded
+			end
+		end
+	end
+	return saved
+end
+
+local function SaveConfig(configFile)
+	if not writefile or not makefolder then
+		warn("[CheddarHub Config] Your executor does not support file saving.")
+		return false
+	end
+
+	configFile = configFile or CONFIG_AUTOSAVE_FILE
+	syncConfigInputs()
+
+	local success, err = pcall(function()
+		if isfolder then
+			if not isfolder(CONFIG_FOLDER) then
+				makefolder(CONFIG_FOLDER)
+			end
+		else
+			makefolder(CONFIG_FOLDER)
+		end
+		writefile(configFile, HttpService:JSONEncode(buildSavedConfig(Config)))
+	end)
+
+	if not success then
+		warn("[CheddarHub Config] Save failed:", err)
+	end
+
+	return success
+end
+
+local function SaveConfigSettings()
+	if not writefile or not makefolder then
+		return false
+	end
+
+	local success = pcall(function()
+		if isfolder then
+			if not isfolder(CONFIG_FOLDER) then
+				makefolder(CONFIG_FOLDER)
+			end
+		else
+			makefolder(CONFIG_FOLDER)
+		end
+		writefile(CONFIG_SETTINGS_FILE, HttpService:JSONEncode({
+			SelectedConfigName = sanitizeConfigName(Config.SelectedConfigName),
+			AutoLoadConfig = Config.AutoLoadConfig == true,
+		}))
+	end)
+
+	return success
+end
+
+local function LoadConfigSettings()
+	if not readfile or not isfile or not isfile(CONFIG_SETTINGS_FILE) then
+		return false
+	end
+
+	local success, settings = pcall(function()
+		return HttpService:JSONDecode(readfile(CONFIG_SETTINGS_FILE))
+	end)
+
+	if success and typeof(settings) == "table" then
+		Config.SelectedConfigName = sanitizeConfigName(settings.SelectedConfigName)
+		Config.AutoLoadConfig = settings.AutoLoadConfig == true
+		return true
+	end
+
+	return false
+end
+
+local function LoadConfig(configFile)
+	configFile = configFile or CONFIG_AUTOSAVE_FILE
+
+	if not readfile or not isfile or not isfile(configFile) then
+		return false
+	end
+
+	local success, saved = pcall(function()
+		return HttpService:JSONDecode(readfile(configFile))
+	end)
+
+	if success and typeof(saved) == "table" then
+		mergeConfig(Config, saved)
+		return true
+	end
+
+	warn("[CheddarHub Config] Load failed:", saved)
+	return false
+end
+
+applyDefaultDisabledConfig()
+LoadConfigSettings()
+
+if Config.AutoLoadConfig and LoadConfig(getNamedConfigFile(Config.SelectedConfigName)) then
+	SaveConfig()
+end
+
+if Config.CheddarPresetVersion ~= 5 then
+	Config.CheddarPresetVersion = 5
+	Config.PlayerESPMaxDistance = 2000
 end
 
 Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
-if not Config.TextureImage or Config.TextureImage == "rbxassetid://0" then
-	Config.TextureImage = DEFAULT_TEXTURE_IMAGE
-end
-Config.TextureTransparency = tonumber(Config.TextureTransparency) or DEFAULT_TEXTURE_TRANSPARENCY
-if Config.TextureImage == DEFAULT_TEXTURE_IMAGE and Config.TextureTransparency == 0.82 then
-	Config.TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY
-end
-Config.TextureTransparency = math.clamp(Config.TextureTransparency, 0, 1)
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.TemperatureNullifierEnabled = Config.TemperatureNullifierEnabled == true
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
+Config.CustomStats = Config.CustomStats or {}
+Config.CustomStatsEnabled = Config.CustomStatsEnabled or {}
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
 Config.ODMGAttributesEnabled = Config.ODMGAttributesEnabled == true
 Config.MovementSafeVersion = 2
-Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled ~= false
+Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled == true
 Config.DamageMultiplier = Config.DamageMultiplier or 9999
-Config.NoRecoilEnabled = Config.NoRecoilEnabled ~= false
-Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled ~= false
+Config.NoRecoilEnabled = Config.NoRecoilEnabled == true
+Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled == true
 Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 3, 1, 5))
-Config.AimAssistEnabled = Config.AimAssistEnabled ~= false
+Config.AimAssistEnabled = Config.AimAssistEnabled == true
 Config.AimAssistTeamCheck = Config.AimAssistTeamCheck == true
-Config.FOVEnabled = Config.FOVEnabled ~= false
+Config.FOVEnabled = Config.FOVEnabled == true
 Config.FOVRadius = Config.FOVRadius or 150
 Config.FOVTransparency = Config.FOVTransparency or 0.5
 Config.HideFOV = Config.HideFOV or false
 Config.PlayerESPEnabled = Config.PlayerESPEnabled == true
+Config.PlayerESPKey = Config.PlayerESPKey or Enum.KeyCode.L
 Config.PlayerESPDistanceEnabled = Config.PlayerESPDistanceEnabled == true
-Config.PlayerESPMaxDistance = tonumber(Config.PlayerESPMaxDistance) or 1500
-Config.PlayerESPOptimized = Config.PlayerESPOptimized ~= false
+Config.PlayerESPMaxDistance = tonumber(Config.PlayerESPMaxDistance) or 2000
+Config.PlayerESPOptimized = Config.PlayerESPOptimized == true
 Config.PlayerESPUpdateRate = math.clamp(tonumber(Config.PlayerESPUpdateRate) or 0.25, 0.05, 2)
-Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled ~= false
+Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled == true
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
-Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled ~= false
+Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled == true
 Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(25, 25, 25)
 Config.SpeedTestTime = tonumber(Config.SpeedTestTime) or 16.5
-Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled ~= false
+Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled == true
 Config.TitanDummyHitboxSize = Config.TitanDummyHitboxSize or Vector3.new(18, 18, 18)
-Config.TitanDummyCountdownEnabled = Config.TitanDummyCountdownEnabled ~= false
-Config.TitanDummyStatusEnabled = Config.TitanDummyStatusEnabled ~= false
-Config.TitanDummyShowEnabled = Config.TitanDummyShowEnabled ~= false
+Config.TitanDummyCountdownEnabled = Config.TitanDummyCountdownEnabled == true
+Config.TitanDummyStatusEnabled = Config.TitanDummyStatusEnabled == true
+Config.TitanDummyShowEnabled = Config.TitanDummyShowEnabled == true
 Config.RawBandageEnabled = Config.RawBandageEnabled or false
 Config.RawBandageHealAmount = tonumber(Config.RawBandageHealAmount) or 25
 Config.RawBandageKey = Config.RawBandageKey or Enum.KeyCode.V
@@ -145,10 +420,12 @@ Config.BandageRemovalMacroEnabled = Config.BandageRemovalMacroEnabled == true
 Config.BandageRemovalMacroKey = Config.BandageRemovalMacroKey or Enum.KeyCode.N
 Config.NoTalentCooldownEnabled = Config.NoTalentCooldownEnabled == true
 Config.BladeModsEnabled = Config.BladeModsEnabled == true
-Config.BladeTitanMultiplierEnabled = Config.BladeTitanMultiplierEnabled ~= false
-Config.BladeHumanMultiplierEnabled = Config.BladeHumanMultiplierEnabled ~= false
+Config.BladeTitanMultiplierEnabled = Config.BladeTitanMultiplierEnabled == true
+Config.BladeHumanMultiplierEnabled = Config.BladeHumanMultiplierEnabled == true
 Config.BladeTitanMultiplier = math.max(tonumber(Config.BladeTitanMultiplier) or 50, 1)
 Config.BladeHumanMultiplier = math.max(tonumber(Config.BladeHumanMultiplier) or 1.5, 1)
+Config.SelectedConfigName = sanitizeConfigName(Config.SelectedConfigName)
+Config.AutoLoadConfig = Config.AutoLoadConfig == true
 
 local movementAttributes = {
 	OdmHookVeloGain = true,
@@ -159,7 +436,7 @@ local movementAttributes = {
 }
 
 local function shouldApplyCustomStat(statName)
-	return not movementAttributes[statName] or Config.ODMGAttributesEnabled
+	return Config.CustomStatsEnabled[statName] == true and (not movementAttributes[statName] or Config.ODMGAttributesEnabled)
 end
 
 local function applyTitanExpansion(titanModel)
@@ -1206,6 +1483,9 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
+local setPlayerESPEnabled
+local startPlayerESP
+
 do
 task.spawn(function()
 	if not Config.CombatHitMultiplierHooked then
@@ -1551,133 +1831,302 @@ local function getClosestPlayerToMouse()
 	return closestPart
 end
 
-local World = workspace:WaitForChild("World", 5)
-local TARGET_ESP_FOLDER = World and World:WaitForChild("Characters", 5)
+local CharactersFolder = workspace:WaitForChild("World"):WaitForChild("Characters")
+local OLD_ESP_NAMES = {
+	"EspGui",
+	"EspGUI",
+	"SeliwareEspGui",
+	"FolderEspGui",
+	"FrameworkEspGui",
+	"ScraperEspGui",
+	"CleanScraperEspGui",
+	"FinalPerfectEspGui",
+	"TrueBranchEspGui",
+	"OptimizedEspGui",
+	"UltraEspGui",
+	"MaxEspGui",
+}
+
+local espClientFramework = nil
+local espGlobalTeams = {}
+local cachedPlayerData = {}
+local activeBillboards = {}
 local PlayerESPStarted = false
+local PLAYER_ESP_TEXT_SIZE = 14
+local PLAYER_ESP_REFRESH_RATE = 0.05
 
-local function removePlayerESP(characterModel)
-	local ui = characterModel and characterModel:FindFirstChild("DevESP_UI", true)
-	if ui then
-		ui:Destroy()
+local function getESPFramework()
+	if espClientFramework ~= nil then
+		return espClientFramework
 	end
+
+	local success, framework = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("ClientFramework"))
+	end)
+
+	if success and framework then
+		espClientFramework = framework
+		espGlobalTeams = framework.GlobalLibrary and framework.GlobalLibrary.Teams or {}
+	else
+		espClientFramework = false
+	end
+
+	return espClientFramework
 end
 
-local function createPlayerESP(characterModel)
-	if not Config.PlayerESPEnabled then
-		removePlayerESP(characterModel)
+local function cacheESPData(playerObject)
+	if not playerObject then
 		return
 	end
 
-	if not characterModel or not characterModel:IsA("Model") or characterModel == localPlayer.Character then
-		return
-	end
+	local firstName = playerObject:GetAttribute("FirstName") or ""
+	local lastName = playerObject:GetAttribute("LastName") or ""
+	local teamId = playerObject:GetAttribute("Team") or ""
+	local branch = "No Branch"
 
-	if characterModel:FindFirstChild("DevESP_UI", true) then
-		return
-	end
-
-	local head = characterModel:FindFirstChild("Head")
-	if not head then
-		return
-	end
-
-	local bGui = Instance.new("BillboardGui")
-	bGui.Name = "DevESP_UI"
-	bGui.Size = UDim2.new(0, 250, 0, 50)
-	bGui.AlwaysOnTop = true
-	bGui.StudsOffset = Vector3.new(0, 3, 0)
-	bGui.Adornee = head
-	bGui.Enabled = true
-
-	local label = Instance.new("TextLabel")
-	label.Name = "ESPLabel"
-	label.Size = UDim2.new(1, 0, 1, 0)
-	label.BackgroundTransparency = 1
-	label.TextSize = 14
-	label.Font = Enum.Font.GothamBold
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextStrokeTransparency = 0
-	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	label.Text = "Loading..."
-	label.Parent = bGui
-
-	bGui.Parent = head
-end
-
-local function updatePlayerESP(characterModel)
-	if not Config.PlayerESPEnabled then
-		removePlayerESP(characterModel)
-		return
-	end
-
-	local myCharacter = localPlayer.Character
-	if not characterModel or not characterModel:IsA("Model") or characterModel == myCharacter then
-		return
-	end
-
-	createPlayerESP(characterModel)
-
-	local myHrp = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
-	local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
-	local hrp = characterModel:FindFirstChild("HumanoidRootPart")
-	local bGui = characterModel:FindFirstChild("DevESP_UI", true)
-	local label = bGui and bGui:FindFirstChild("ESPLabel")
-
-	if label and humanoid and hrp then
-		local distance = 0
-		if myHrp then
-			distance = math.floor((hrp.Position - myHrp.Position).Magnitude)
+	if teamId ~= "" then
+		if espGlobalTeams[teamId] then
+			branch = teamId
+		else
+			for teamName in pairs(espGlobalTeams) do
+				if teamName == teamId then
+					branch = teamName
+					break
+				end
+			end
+			if branch == "No Branch" then
+				branch = teamId
+			end
 		end
-
-		local health = math.max(0, math.floor(humanoid.Health))
-		label.Text = string.format("%s | HP: %d | %ds", characterModel.Name, health, distance)
 	end
+
+	local loreName = "Unknown"
+	if firstName ~= "" or lastName ~= "" then
+		loreName = string.format("%s %s", firstName, lastName):match("^%s*(.-)%s*$")
+	end
+
+	cachedPlayerData[playerObject.Name] = {
+		LoreName = loreName,
+		Branch = branch,
+	}
+end
+
+local function monitorESPPlayer(playerObject)
+	cacheESPData(playerObject)
+	playerObject:GetAttributeChangedSignal("Team"):Connect(function()
+		cacheESPData(playerObject)
+	end)
+	playerObject:GetAttributeChangedSignal("FirstName"):Connect(function()
+		cacheESPData(playerObject)
+	end)
+	playerObject:GetAttributeChangedSignal("LastName"):Connect(function()
+		cacheESPData(playerObject)
+	end)
+end
+
+local function scanESPFrameworkPlayers()
+	local framework = getESPFramework()
+	if not framework or type(framework.GetPlayers) ~= "function" then
+		return
+	end
+
+	local success, frameworkPlayers = pcall(function()
+		return framework.GetPlayers()
+	end)
+
+	if success and type(frameworkPlayers) == "table" then
+		for i = 1, #frameworkPlayers do
+			local playerObject = frameworkPlayers[i]
+			if playerObject and not cachedPlayerData[playerObject.Name] then
+				monitorESPPlayer(playerObject)
+			end
+		end
+	end
+end
+
+local function getESPHealthColor(humanoid)
+	local maxHealth = humanoid.MaxHealth
+	local currentHealth = humanoid.Health
+	local percent = (maxHealth > 0) and (currentHealth / maxHealth) * 100 or 100
+
+	if percent >= 70 then
+		return Color3.fromRGB(0, 255, 120)
+	elseif percent >= 40 then
+		return Color3.fromRGB(255, 200, 0)
+	elseif percent >= 20 then
+		return Color3.fromRGB(255, 110, 0)
+	end
+
+	return Color3.fromRGB(255, 0, 50)
+end
+
+local function removePlayerESP(model)
+	if not model then
+		return
+	end
+
+	activeBillboards[model] = nil
+	local root = model:FindFirstChild("HumanoidRootPart")
+	local existing = root and root:FindFirstChild("StaffTrackerEspGui")
+	if existing then
+		existing:Destroy()
+	end
+end
+
+local function setupModelESP(model)
+	if not Config.PlayerESPEnabled or not model:IsA("Model") or model.Name == localPlayer.Name then
+		return
+	end
+
+	local root = model:WaitForChild("HumanoidRootPart", 5)
+	if not root then
+		return
+	end
+
+	for i = 1, #OLD_ESP_NAMES do
+		local legacy = root:FindFirstChild(OLD_ESP_NAMES[i])
+		if legacy then
+			legacy:Destroy()
+		end
+	end
+
+	if root:FindFirstChild("StaffTrackerEspGui") then
+		return
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "StaffTrackerEspGui"
+	billboard.AlwaysOnTop = true
+	billboard.Size = UDim2.new(0, 550, 0, 100)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.Adornee = root
+	billboard.Enabled = Config.PlayerESPEnabled
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Name = "EspText"
+	textLabel.Size = UDim2.new(1, 0, 0, 30)
+	textLabel.Position = UDim2.new(0, 0, 0, 45)
+	textLabel.BackgroundTransparency = 1
+	textLabel.TextSize = PLAYER_ESP_TEXT_SIZE
+	textLabel.Font = Enum.Font.RobotoMono
+	textLabel.TextStrokeTransparency = 0.15
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textLabel.Parent = billboard
+
+	local modTag = Instance.new("TextLabel")
+	modTag.Name = "ModTag"
+	modTag.Size = UDim2.new(1, 0, 0, 40)
+	modTag.Position = UDim2.new(0, 0, 0, 5)
+	modTag.BackgroundTransparency = 1
+	modTag.TextSize = 28
+	modTag.Font = Enum.Font.RobotoMono
+	modTag.TextColor3 = Color3.fromRGB(255, 255, 255)
+	modTag.TextStrokeTransparency = 0.05
+	modTag.TextStrokeColor3 = Color3.fromRGB(255, 0, 0)
+	modTag.Text = "MODERATOR"
+	modTag.Visible = false
+	modTag.Parent = billboard
+
+	billboard.Parent = root
+	activeBillboards[model] = textLabel
 end
 
 local function clearPlayerESP()
-	if not TARGET_ESP_FOLDER then
-		return
+	for model in pairs(activeBillboards) do
+		removePlayerESP(model)
 	end
 
-	for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
-		removePlayerESP(character)
+	for _, model in ipairs(CharactersFolder:GetChildren()) do
+		removePlayerESP(model)
 	end
 end
 
 local function scanPlayerESP()
-	if not TARGET_ESP_FOLDER then
-		return
-	end
-
-	for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
-		task.spawn(updatePlayerESP, character)
+	for _, model in ipairs(CharactersFolder:GetChildren()) do
+		task.spawn(setupModelESP, model)
 	end
 end
 
-local function startPlayerESP()
-	if PlayerESPStarted or not TARGET_ESP_FOLDER then
+setPlayerESPEnabled = function(enabled)
+	Config.PlayerESPEnabled = enabled
+	for model, label in pairs(activeBillboards) do
+		local billboard = label.Parent
+		if billboard then
+			billboard.Enabled = enabled
+		end
+	end
+	if enabled then
+		scanPlayerESP()
+	else
+		clearPlayerESP()
+	end
+end
+
+startPlayerESP = function()
+	if PlayerESPStarted then
 		return
 	end
 
 	PlayerESPStarted = true
-	RunService.RenderStepped:Connect(function()
-		if not Config.PlayerESPEnabled then
-			return
-		end
-
-		for _, character in ipairs(TARGET_ESP_FOLDER:GetChildren()) do
-			task.spawn(updatePlayerESP, character)
-		end
+	CharactersFolder.ChildAdded:Connect(setupModelESP)
+	CharactersFolder.ChildRemoved:Connect(function(child)
+		activeBillboards[child] = nil
 	end)
+	scanPlayerESP()
 
-	TARGET_ESP_FOLDER.ChildRemoving:Connect(function(child)
-		removePlayerESP(child)
-	end)
+	task.spawn(function()
+		while true do
+			task.wait(PLAYER_ESP_REFRESH_RATE)
+			scanESPFrameworkPlayers()
 
-	TARGET_ESP_FOLDER.ChildAdded:Connect(function(child)
-		task.delay(0.5, function()
-			updatePlayerESP(child)
-		end)
+			if not Config.PlayerESPEnabled then
+				continue
+			end
+
+			local localChar = localPlayer.Character or workspace:FindFirstChild(localPlayer.Name)
+			local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+			if not localRoot then
+				continue
+			end
+			local localPos = localRoot.Position
+
+			for model, textLabel in pairs(activeBillboards) do
+				local root = model:FindFirstChild("HumanoidRootPart")
+				local humanoid = model:FindFirstChildOfClass("Humanoid")
+				local billboard = textLabel.Parent
+
+				if root and humanoid and humanoid.Health > 0 and billboard then
+					local distance = math.round((root.Position - localPos).Magnitude)
+					if distance > Config.PlayerESPMaxDistance then
+						billboard.Enabled = false
+						continue
+					end
+
+					billboard.Enabled = true
+					local data = cachedPlayerData[model.Name]
+					local branch = data and data.Branch or "No Branch"
+					local loreName = data and data.LoreName or "Unknown"
+					local health = math.round(humanoid.Health)
+
+					textLabel.Text = string.format("%s | %s | HP: %d | %dstuds | %s", model.Name, loreName, health, distance, branch)
+
+					local modTag = billboard:FindFirstChild("ModTag")
+					if branch == "Staff Team" then
+						textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+						if modTag then
+							modTag.Visible = true
+						end
+					else
+						textLabel.TextColor3 = getESPHealthColor(humanoid)
+						if modTag then
+							modTag.Visible = false
+						end
+					end
+				elseif billboard then
+					billboard.Enabled = false
+				end
+			end
+		end
 	end)
 end
 
@@ -1796,22 +2245,6 @@ addCorner(main, 18)
 addStroke(main, COLORS.STROKE, 0.05)
 addGradient(main, COLORS.BG, Color3.fromRGB(8, 15, 25))
 
-local texture = mk("ImageLabel", {
-	Name = "TextureOverlay",
-	Parent = main,
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromScale(1.08, 1.08),
-	BackgroundTransparency = 1,
-	Image = Config.TextureImage,
-	ImageColor3 = Color3.fromRGB(185, 210, 245),
-	ImageTransparency = Config.TextureTransparency,
-	ScaleType = Enum.ScaleType.Crop,
-	Active = false,
-	ZIndex = 1,
-})
-addCorner(texture, 18)
-
 local tint = mk("Frame", {
 	Parent = main,
 	Size = UDim2.fromScale(1, 1),
@@ -1916,6 +2349,8 @@ local state = {
 	Dragging = false,
 	DragStart = nil,
 	StartPosition = nil,
+	DragDelta = Vector3.zero,
+	DragDirty = false,
 }
 
 local pages = {}
@@ -2023,6 +2458,24 @@ local function label(parent, y, text)
 	})
 end
 
+local configRefreshers = {}
+local statValueBoxes = {}
+
+local function refreshConfigControls()
+	for _, refresh in ipairs(configRefreshers) do
+		pcall(refresh)
+	end
+end
+
+syncConfigInputs = function()
+	for statName, box in pairs(statValueBoxes) do
+		local value = tonumber(box.Text)
+		if value then
+			Config.CustomStats[statName] = value
+		end
+	end
+end
+
 local function createToggle(parent, y, text, getter, setter)
 	label(parent, y, text)
 	local button = mk("TextButton", {
@@ -2057,10 +2510,13 @@ local function createToggle(parent, y, text, getter, setter)
 		local success, err = pcall(setter, not current)
 		if not success then
 			warn("[Toggle Error]", text, err)
+		else
+			SaveConfig()
 		end
 		refresh()
 	end)
 	refresh()
+	table.insert(configRefreshers, refresh)
 	return refresh
 end
 
@@ -2083,8 +2539,71 @@ local function createTextBox(parent, y, text, value, callback)
 	addStroke(box, COLORS.STROKE_SOFT, 0.18)
 	box.FocusLost:Connect(function()
 		callback(box.Text, box)
+		SaveConfig()
 	end)
 	return box
+end
+
+local function createStatToggleBox(parent, y, statName)
+	label(parent, y, statName)
+	local box = mk("TextBox", {
+		Parent = parent,
+		Position = UDim2.new(1, -222, 0, y + 2),
+		Size = UDim2.fromOffset(110, 28),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = tostring(Config.CustomStats[statName]),
+		TextColor3 = COLORS.TEXT,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 12,
+		ZIndex = 5,
+	})
+	addCorner(box, 9)
+	addStroke(box, COLORS.STROKE_SOFT, 0.18)
+	statValueBoxes[statName] = box
+	box.FocusLost:Connect(function()
+		local value = tonumber(box.Text)
+		if value then
+			Config.CustomStats[statName] = value
+		end
+		box.Text = tostring(Config.CustomStats[statName])
+		SaveConfig()
+	end)
+
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -104, 0, y + 2),
+		Size = UDim2.fromOffset(82, 27),
+		BackgroundColor3 = COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = "",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+		ZIndex = 5,
+	})
+	addCorner(button, 9)
+
+	local function refresh()
+		local enabled = Config.CustomStatsEnabled[statName] == true
+		box.Text = tostring(Config.CustomStats[statName])
+		button.Text = enabled and "ON" or "OFF"
+		TweenService:Create(button, TweenInfo.new(0.14), {
+			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
+		}):Play()
+	end
+
+	button.MouseButton1Click:Connect(function()
+		Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] ~= true
+		refresh()
+		SaveConfig()
+	end)
+
+	refresh()
+	table.insert(configRefreshers, refresh)
+	return refresh
 end
 
 local function createKeybind(parent, y, text, getter, setter)
@@ -2120,6 +2639,7 @@ local function createKeybind(parent, y, text, getter, setter)
 		refresh()
 	end)
 	refresh()
+	table.insert(configRefreshers, refresh)
 	return refresh
 end
 
@@ -2224,31 +2744,20 @@ end, function(value)
 	Config.ODMGAttributesEnabled = value
 end)
 
-local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * 14)
 local stats = {
 	"FirearmRange",
 	"GasConservation",
-	"MeleeDamage",
 	"OdmHookVeloGain",
 	"OdmPassiveVeloGain",
 	"OdmVeloCap",
-	"PlayerCritChance",
 	"ReloadSpeed",
 	"RunSpeed",
-	"StrengthMultiplier",
-	"SwingSpeed",
-	"TitanCritChance",
-	"TitanMultiplier",
 	"VelocityScaling",
 }
+local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #stats)
 for index, statName in ipairs(stats) do
-	createTextBox(statCard, 42 + index * 36, statName, Config.CustomStats[statName], function(text, box)
-		local value = tonumber(text)
-		if value then
-			Config.CustomStats[statName] = value
-		end
-		box.Text = tostring(Config.CustomStats[statName])
-	end)
+	Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
+	createStatToggleBox(statCard, 42 + index * 36, statName)
 end
 
 local bandageCard = createCard(miscPage, "Bandage Controls", 166)
@@ -2380,17 +2889,23 @@ end, function(value)
 end)
 end
 
-local playerESPCard = createCard(visualPage, "Player ESP", 94)
+local playerESPCard = createCard(visualPage, "Player ESP", 170)
 createToggle(playerESPCard, 50, "Enable Player ESP", function()
 	return Config.PlayerESPEnabled
 end, function(value)
-	Config.PlayerESPEnabled = value
-	if not value then
-		clearPlayerESP()
-	else
-		startPlayerESP()
-		scanPlayerESP()
+	setPlayerESPEnabled(value)
+end)
+createTextBox(playerESPCard, 88, "Max Distance", Config.PlayerESPMaxDistance, function(text, box)
+	local value = tonumber(text)
+	if value and value > 0 then
+		Config.PlayerESPMaxDistance = value
 	end
+	box.Text = tostring(Config.PlayerESPMaxDistance)
+end)
+local refreshPlayerESPBind = createKeybind(playerESPCard, 126, "Toggle ESP Key", function()
+	return Config.PlayerESPKey
+end, function(value)
+	Config.PlayerESPKey = value
 end)
 
 local traitsCard = createCard(otherPage, "Traits", 94)
@@ -2536,39 +3051,103 @@ createTextBox(bladeModsCard, 202, "Human Damage Mult", Config.BladeHumanMultipli
 	end
 end)
 
-local interfaceCard = createCard(settingsPage, "Interface", 212)
+local interfaceCard = createCard(settingsPage, "Interface", 96)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
 	return Config.ToggleUIKey
 end, function(value)
 	Config.ToggleUIKey = value
 end)
-createTextBox(interfaceCard, 88, "Texture Asset ID", Config.TextureImage, function(text, box)
-	local image = text
-	if tonumber(text) then
-		image = "rbxassetid://" .. text
-	end
-	Config.TextureImage = image
-	texture.Image = image
-	box.Text = image
-end)
-createTextBox(interfaceCard, 126, "Texture Transparency (0-1)", Config.TextureTransparency, function(text, box)
-	Config.TextureTransparency = math.clamp(tonumber(text) or Config.TextureTransparency, 0, 1)
-	texture.ImageTransparency = Config.TextureTransparency
-	box.Text = tostring(Config.TextureTransparency)
-end)
 
-mk("TextLabel", {
-	Parent = interfaceCard,
-	Position = UDim2.new(0, 18, 0, 169),
-	Size = UDim2.new(1, -36, 0, 30),
-	BackgroundTransparency = 1,
-	Text = "Upload your texture to Roblox, then paste its asset ID above.",
-	TextColor3 = COLORS.SUB,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	ZIndex = 5,
-})
+local function applyConfigEffects()
+	if Config.NapeEnabled or Config.EyeEnabled then
+		for _, titan in ipairs(TitansFolder:GetChildren()) do
+			task.spawn(applyTitanExpansion, titan)
+		end
+	end
+
+	if Config.NullifyEnabled then
+		for _, titan in ipairs(TitansFolder:GetChildren()) do
+			task.spawn(optimizeTitanNullify, titan)
+		end
+	end
+
+	if Config.BandageEnabled and localPlayer.Character then
+		localPlayer.Character:SetAttribute("BandageCount", 1)
+	end
+
+	if Config.NoFallDamageEnabled then
+		task.spawn(disableFallDamageLoop)
+	end
+
+	if Config.TemperatureNullifierEnabled then
+		installTemperatureNullifier()
+	end
+
+	if Config.MusketBullseyeEnabled then
+		updateMusketBullseyes()
+	end
+
+	if Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled then
+		updateTitanDummies()
+	end
+
+	if Config.BladeModsEnabled then
+		task.spawn(installBladeMods)
+	end
+
+	if Config.NoTalentCooldownEnabled then
+		startNoTalentCooldownLoop()
+	end
+
+	if setPlayerESPEnabled then
+		setPlayerESPEnabled(Config.PlayerESPEnabled == true)
+	end
+end
+
+local configCard = createCard(settingsPage, "Configurations", 286)
+local configNameCycleIndex = 0
+local configNameBox = createTextBox(configCard, 50, "Config Name", Config.SelectedConfigName, function(text, box)
+	Config.SelectedConfigName = sanitizeConfigName(text)
+	box.Text = Config.SelectedConfigName
+	SaveConfigSettings()
+end)
+createButton(configCard, 88, "Save Selected", function()
+	Config.SelectedConfigName = sanitizeConfigName(configNameBox.Text)
+	configNameBox.Text = Config.SelectedConfigName
+	SaveConfigSettings()
+	SaveConfig(getNamedConfigFile(Config.SelectedConfigName))
+end)
+createButton(configCard, 126, "Load Selected", function()
+	Config.SelectedConfigName = sanitizeConfigName(configNameBox.Text)
+	configNameBox.Text = Config.SelectedConfigName
+	SaveConfigSettings()
+	if LoadConfig(getNamedConfigFile(Config.SelectedConfigName)) then
+		refreshConfigControls()
+		applyConfigEffects()
+		SaveConfig()
+	end
+end)
+createToggle(configCard, 164, "Autoload Selected", function()
+	return Config.AutoLoadConfig
+end, function(value)
+	Config.AutoLoadConfig = value
+	Config.SelectedConfigName = sanitizeConfigName(configNameBox.Text)
+	configNameBox.Text = Config.SelectedConfigName
+	SaveConfigSettings()
+end)
+createButton(configCard, 202, "Save Default", function()
+	SaveConfig(CONFIG_MANUAL_FILE)
+end)
+createButton(configCard, 240, "Next Config", function()
+	local names = getSavedConfigNames()
+	if #names == 0 then
+		return
+	end
+	configNameCycleIndex = (configNameCycleIndex % #names) + 1
+	Config.SelectedConfigName = names[configNameCycleIndex]
+	configNameBox.Text = Config.SelectedConfigName
+	SaveConfigSettings()
+end)
 
 local buttonsCard = createCard(settingsPage, "Window Controls", 96)
 mk("TextLabel", {
@@ -2598,9 +3177,12 @@ topBar.InputBegan:Connect(function(input)
 		state.Dragging = true
 		state.DragStart = input.Position
 		state.StartPosition = main.Position
+		state.DragDelta = Vector3.zero
+		state.DragDirty = false
 		input.Changed:Connect(function()
 			if input.UserInputState == Enum.UserInputState.End then
 				state.Dragging = false
+				state.DragDirty = false
 			end
 		end)
 	end
@@ -2608,13 +3190,21 @@ end)
 
 UserInputService.InputChanged:Connect(function(input)
 	if state.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-		local delta = input.Position - state.DragStart
+		state.DragDelta = input.Position - state.DragStart
+		state.DragDirty = true
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if state.Dragging and state.DragDirty and state.StartPosition then
+		local delta = state.DragDelta
 		main.Position = UDim2.new(
 			state.StartPosition.X.Scale,
 			state.StartPosition.X.Offset + delta.X,
 			state.StartPosition.Y.Scale,
 			state.StartPosition.Y.Offset + delta.Y
 		)
+		state.DragDirty = false
 	end
 end)
 
@@ -2627,6 +3217,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		state.CaptureRefresh = nil
 		if setter then
 			setter(input.KeyCode)
+			SaveConfig()
 		end
 		if refresh then
 			refresh()
@@ -2635,6 +3226,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		refreshRefillBind()
 		refreshRawBandageBind()
 		refreshBandageRemovalBind()
+		refreshPlayerESPBind()
 		return
 	end
 
@@ -2650,21 +3242,14 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		fireRawBandageHeal()
 	elseif input.KeyCode == Config.BandageRemovalMacroKey then
 		task.spawn(executeBandageRemoval)
+	elseif input.KeyCode == Config.PlayerESPKey then
+		setPlayerESPEnabled(not Config.PlayerESPEnabled)
+		refreshConfigControls()
+		SaveConfig()
 	end
 end)
-
-if Config.BladeModsEnabled then
-	task.spawn(installBladeMods)
-end
-
-if Config.NoTalentCooldownEnabled then
-	startNoTalentCooldownLoop()
-end
-
-if Config.TemperatureNullifierEnabled then
-	installTemperatureNullifier()
-end
 
 switchPage("Main")
 setWindowOpen(true)
 task.spawn(startPlayerESP)
+applyConfigEffects()
