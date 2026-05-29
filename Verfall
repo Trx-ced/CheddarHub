@@ -23,15 +23,15 @@ _G.UI_Config = _G.UI_Config or {
 	ODMGAttributesEnabled = true,
 	MovementSafeVersion = 2,
 	CustomStats = {
-		FirearmRange = 500,
+		FirearmRange = 1200,
 		GasConservation = 0.5,
-		MeleeDamage = 5000,
-		OdmHookVeloGain = 2,
+		MeleeDamage = 6,
+		OdmHookVeloGain = 3,
 		OdmPassiveVeloGain = 2,
-		OdmVeloCap = 300,
-		PlayerCritChance = 1000,
-		ReloadSpeed = 1.5,
-		RunSpeed = 1,
+		OdmVeloCap = 250,
+		PlayerCritChance = 100,
+		ReloadSpeed = 1.65,
+		RunSpeed = 9,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
@@ -41,6 +41,7 @@ _G.UI_Config = _G.UI_Config or {
 	BandageEnabled = true,
 	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
+	TemperatureNullifierEnabled = false,
 	VelocityCapperEnabled = true,
 	SelfHealAmount = 100,
 	OtherHealAmount = 150,
@@ -49,38 +50,38 @@ _G.UI_Config = _G.UI_Config or {
 	TextureImage = DEFAULT_TEXTURE_IMAGE,
 	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 9999,
+	DamageMultiplier = 10,
 	NoRecoilEnabled = true,
 	MeleeHitMultiplierEnabled = true,
 	MeleeHitMultiplier = 3,
 	AimAssistEnabled = true,
-	AimAssistTeamCheck = false,
+	AimAssistTeamCheck = true,
 	FOVEnabled = true,
 	FOVRadius = 150,
 	FOVTransparency = 0.5,
-	HideFOV = false,
+	HideFOV = true,
 	PlayerESPEnabled = false,
 	PlayerESPDistanceEnabled = false,
 	PlayerESPMaxDistance = 1500,
 	PlayerESPOptimized = true,
 	PlayerESPUpdateRate = 0.25,
 	RemoveTraitsEnabled = true,
-	InfHorseStamEnabled = false,
-	MusketBullseyeEnabled = true,
+	InfHorseStamEnabled = true,
+	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
-	TitanDummyHitboxEnabled = true,
+	TitanDummyHitboxEnabled = false,
 	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
-	TitanDummyCountdownEnabled = true,
-	TitanDummyStatusEnabled = true,
-	TitanDummyShowEnabled = true,
-	RawBandageEnabled = false,
+	TitanDummyCountdownEnabled = false,
+	TitanDummyStatusEnabled = false,
+	TitanDummyShowEnabled = false,
+	RawBandageEnabled = true,
 	RawBandageHealAmount = 25,
 	RawBandageKey = Enum.KeyCode.V,
 	BandageRemovalMacroEnabled = false,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
-	NoTalentCooldownEnabled = false,
-	BladeModsEnabled = false,
+	NoTalentCooldownEnabled = true,
+	BladeModsEnabled = true,
 	BladeTitanMultiplierEnabled = true,
 	BladeHumanMultiplierEnabled = true,
 	BladeTitanMultiplier = 50,
@@ -105,6 +106,7 @@ if Config.TextureImage == DEFAULT_TEXTURE_IMAGE and Config.TextureTransparency =
 end
 Config.TextureTransparency = math.clamp(Config.TextureTransparency, 0, 1)
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
+Config.TemperatureNullifierEnabled = Config.TemperatureNullifierEnabled == true
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
@@ -1101,6 +1103,42 @@ local function startNoTalentCooldownLoop()
 
 		talentCooldowns.Running = false
 	end)
+end
+
+local temperatureNullifier = {
+	Installed = false,
+}
+
+local function installTemperatureNullifier()
+	if temperatureNullifier.Installed or type(getgc) ~= "function" or type(hookfunction) ~= "function" then
+		return
+	end
+
+	for _, obj in pairs(getgc(true)) do
+		if type(obj) == "function" and (not islclosure or islclosure(obj)) then
+			local okInfo, info = pcall(debug.getinfo, obj)
+			if okInfo and info and (info.name == "UpdateTemperature" or info.name == "UpdateUI") then
+				for i = 1, info.nups or 0 do
+					local okUpvalue, name = pcall(debug.getupvalue, obj, i)
+					if okUpvalue and name == "v_u_22" then
+						pcall(debug.setupvalue, obj, i, 50)
+					end
+				end
+
+				local original = obj
+				pcall(function()
+					hookfunction(obj, function(...)
+						if Config.TemperatureNullifierEnabled then
+							return
+						end
+						return original(...)
+					end)
+				end)
+			end
+		end
+	end
+
+	temperatureNullifier.Installed = true
 end
 
 local function disableFallDamageLoop()
@@ -2255,6 +2293,16 @@ end, function(value)
 	end
 end)
 
+local temperatureCard = createCard(miscPage, "Temperature Nullifier", 94)
+createToggle(temperatureCard, 50, "Enable Temperature Nullifier", function()
+	return Config.TemperatureNullifierEnabled
+end, function(value)
+	Config.TemperatureNullifierEnabled = value
+	if value then
+		installTemperatureNullifier()
+	end
+end)
+
 local velocityCard = createCard(miscPage, "Velocity Capper", 132)
 createToggle(velocityCard, 50, "Enable Velocity Capper", function()
 	return Config.VelocityCapperEnabled
@@ -2611,6 +2659,10 @@ end
 
 if Config.NoTalentCooldownEnabled then
 	startNoTalentCooldownLoop()
+end
+
+if Config.TemperatureNullifierEnabled then
+	installTemperatureNullifier()
 end
 
 switchPage("Main")
