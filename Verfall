@@ -277,13 +277,14 @@ local function buildSavedConfig(source)
 	return saved
 end
 
-local function SaveConfig(configFile)
+local autosaveQueued = false
+
+local function writeConfigFile(configFile)
 	if not writefile or not makefolder then
 		warn("[CheddarHub Config] Your executor does not support file saving.")
 		return false
 	end
 
-	configFile = configFile or CONFIG_AUTOSAVE_FILE
 	syncConfigInputs()
 
 	local success, err = pcall(function()
@@ -302,6 +303,24 @@ local function SaveConfig(configFile)
 	end
 
 	return success
+end
+
+local function SaveConfig(configFile)
+	if configFile then
+		return writeConfigFile(configFile)
+	end
+
+	if autosaveQueued then
+		return true
+	end
+
+	autosaveQueued = true
+	task.delay(0.35, function()
+		autosaveQueued = false
+		writeConfigFile(CONFIG_AUTOSAVE_FILE)
+	end)
+
+	return true
 end
 
 local function SaveConfigSettings()
@@ -537,13 +556,14 @@ end)
 local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
 if clientInfo then
 	task.spawn(function()
-		while task.wait() do
+		while task.wait(0.35) do
 			if Config.AttributesEnabled then
 				if not clientInfo.Parent then
 					break
 				end
-				for statName, statValue in pairs(Config.CustomStats) do
-					if shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
+				for statName, enabled in pairs(Config.CustomStatsEnabled) do
+					local statValue = Config.CustomStats[statName]
+					if enabled == true and statValue ~= nil and shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
 						clientInfo:SetAttribute(statName, statValue)
 					end
 				end
@@ -1102,7 +1122,10 @@ task.spawn(function()
 end)
 
 local function instantRefillAll()
-	for _, obj in pairs(getgc(true)) do
+	for index, obj in pairs(getgc(true)) do
+		if type(index) == "number" and index % 200 == 0 then
+			task.wait()
+		end
 		if type(obj) == "table" then
 			if obj.MaxGas and rawget(obj, "Gas") then
 				obj.Gas = obj.MaxGas
@@ -1290,6 +1313,29 @@ local bladeMods = {
 	OriginalOnHit = nil,
 }
 
+local function unwrapOriginalHitFunction(fn)
+	local current = fn
+	local seen = {}
+
+	while type(current) == "function" and not seen[current] and debug and debug.getupvalue do
+		seen[current] = true
+		local unwrapped
+		for i = 1, 12 do
+			local ok, name, value = pcall(debug.getupvalue, current, i)
+			if ok and (name == "originalOnHit" or name == "original") and type(value) == "function" then
+				unwrapped = value
+				break
+			end
+		end
+		if not unwrapped then
+			break
+		end
+		current = unwrapped
+	end
+
+	return current or fn
+end
+
 local function installBladeMods()
 	if bladeMods.Patched then
 		return
@@ -1299,13 +1345,16 @@ local function installBladeMods()
 		return
 	end
 
-	for _, obj in pairs(getgc(true)) do
+	for index, obj in pairs(getgc(true)) do
+		if type(index) == "number" and index % 200 == 0 then
+			task.wait()
+		end
 		if type(obj) == "table" and rawget(obj, "OnHit") and rawget(obj, "CalculateDura") and type(obj.OnHit) == "function" then
-			obj.__CheddarOriginalOnHit = obj.__CheddarOriginalOnHit or obj.OnHit
+			obj.__CheddarOriginalOnHit = unwrapOriginalHitFunction(obj.__CheddarOriginalOnHit or obj.OnHit)
 			bladeMods.Target = obj
 			bladeMods.OriginalOnHit = obj.__CheddarOriginalOnHit
 
-			if obj.OnHit ~= obj.__CheddarWrappedOnHit or obj.__CheddarWrappedOnHitVersion ~= 2 then
+			if obj.OnHit ~= obj.__CheddarWrappedOnHit or obj.__CheddarWrappedOnHitVersion ~= 3 then
 				obj.__CheddarWrappedOnHit = function(self, target, hitPart, enemyType, ...)
 					if not Config.BladeModsEnabled then
 						return obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
@@ -1326,14 +1375,11 @@ local function installBladeMods()
 						end
 					end
 
-					local results = table.pack(pcall(obj.__CheddarOriginalOnHit, self, target, hitPart, enemyType, ...))
+					local result = obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
 					self.Damage = trueBase
-					if not results[1] then
-						error(results[2])
-					end
-					return unpack(results, 2, results.n)
+					return result
 				end
-				obj.__CheddarWrappedOnHitVersion = 2
+				obj.__CheddarWrappedOnHitVersion = 3
 				obj.OnHit = obj.__CheddarWrappedOnHit
 			end
 
@@ -1391,7 +1437,10 @@ local function installTemperatureNullifier()
 		return
 	end
 
-	for _, obj in pairs(getgc(true)) do
+	for index, obj in pairs(getgc(true)) do
+		if type(index) == "number" and index % 200 == 0 then
+			task.wait()
+		end
 		if type(obj) == "function" and (not islclosure or islclosure(obj)) then
 			local okInfo, info = pcall(debug.getinfo, obj)
 			if okInfo and info and (info.name == "UpdateTemperature" or info.name == "UpdateUI") then
@@ -1419,7 +1468,10 @@ local function installTemperatureNullifier()
 end
 
 local function disableFallDamageLoop()
-	for _, object in pairs(getgc(false)) do
+	for index, object in pairs(getgc(false)) do
+		if type(index) == "number" and index % 200 == 0 then
+			task.wait()
+		end
 		if type(object) == "function" then
 			local success, info = pcall(debug.getinfo, object)
 			if success and info and (info.name == "Deconnexions" or (info.source and string.find(info.source, "FallDamage"))) then
@@ -1485,38 +1537,68 @@ end)
 
 local setPlayerESPEnabled
 local startPlayerESP
+local MELEE_DAMAGE_KEYS = {
+	"Damage",
+	"BaseDamage",
+	"MeleeDamage",
+	"LightDamage",
+	"HeavyDamage",
+	"M1Damage",
+	"M2Damage",
+	"HitDamage",
+}
 
 do
 task.spawn(function()
-	if not Config.CombatHitMultiplierHooked then
-		local hooked = false
-		local installed = pcall(function()
-			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
-			if clientFramework then
-				local classes = clientFramework:WaitForChild("Classes", 5)
-				local combatClassFile = classes and classes:FindFirstChild("CombatClass")
-				if combatClassFile then
-					local success, combatClass = pcall(require, combatClassFile)
-					if success and combatClass and type(combatClass.OnHit) == "function" then
-						local originalOnHit = combatClass.OnHit
-						combatClass.OnHit = function(self, p32, p33, p34)
-							if not Config.MeleeHitMultiplierEnabled then
-								return originalOnHit(self, p32, p33, p34)
-							end
-							for _ = 1, math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 1, 1, 5)) do
-								task.spawn(function()
-									originalOnHit(self, p32, p33, p34)
-								end)
+	local hooked = false
+	local installed = pcall(function()
+		local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+		if clientFramework then
+			local classes = clientFramework:WaitForChild("Classes", 5)
+			local combatClassFile = classes and classes:FindFirstChild("CombatClass")
+			if combatClassFile then
+				local success, combatClass = pcall(require, combatClassFile)
+				if success and combatClass and type(combatClass.OnHit) == "function" and combatClass.__CheddarMeleeHookVersion ~= 6 then
+					local originalOnHit = unwrapOriginalHitFunction(combatClass.__CheddarOriginalOnHit or combatClass.OnHit)
+					combatClass.__CheddarOriginalOnHit = originalOnHit
+					combatClass.OnHit = function(self, p32, p33, p34)
+						if not Config.MeleeHitMultiplierEnabled then
+							return originalOnHit(self, p32, p33, p34)
+						end
+
+						local multiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 1, 1, 5))
+						local originalValues = {}
+						local changedCount = 0
+
+						if multiplier > 1 then
+							for _, key in ipairs(MELEE_DAMAGE_KEYS) do
+								local value = rawget(self, key)
+								if type(value) == "number" then
+									originalValues[key] = value
+									changedCount += 1
+									self[key] = value * multiplier
+								end
 							end
 						end
-						hooked = true
+
+						if changedCount == 0 then
+							return originalOnHit(self, p32, p33, p34)
+						end
+
+						local result = originalOnHit(self, p32, p33, p34)
+						for key, value in pairs(originalValues) do
+							self[key] = value
+						end
+						return result
 					end
+					combatClass.__CheddarMeleeHookVersion = 6
+					hooked = true
 				end
 			end
-		end)
-		if installed and hooked then
-			Config.CombatHitMultiplierHooked = true
 		end
+	end)
+	if installed and hooked then
+		Config.CombatHitMultiplierHooked = true
 	end
 
 	if not Config.GunFrameworkModified then
@@ -1798,6 +1880,71 @@ local function isSameTeam(playerA, playerB, characterModelB)
 	return teamA and teamB and teamA == teamB
 end
 
+local teamCheckCache = {}
+local localTeamCache = {
+	Value = nil,
+	Updated = 0,
+}
+
+local function getCachedLocalTeam()
+	local now = os.clock()
+	if now - localTeamCache.Updated > 2 then
+		localTeamCache.Value = getPlayerTeam(localPlayer) or getLocalProfileBranch()
+		localTeamCache.Updated = now
+	end
+	return localTeamCache.Value
+end
+
+local function getFastCharacterTeam(targetPlayer, characterModel)
+	if targetPlayer then
+		local playerTeam = getPlayerTeam(targetPlayer)
+		if playerTeam then
+			return playerTeam
+		end
+	end
+
+	if characterModel then
+		for _, attributeName in ipairs({ "Team", "Faction", "Regiment" }) do
+			local value = characterModel:GetAttribute(attributeName)
+			if value ~= nil and tostring(value) ~= "" then
+				return tostring(value)
+			end
+		end
+	end
+
+	return nil
+end
+
+local function isSameTeamCached(targetPlayer, characterModel)
+	local teamA = getCachedLocalTeam()
+	if not teamA then
+		return false
+	end
+
+	local cacheKey = targetPlayer or characterModel
+	if not cacheKey then
+		return false
+	end
+
+	local now = os.clock()
+	local cached = teamCheckCache[cacheKey]
+	if cached and now - cached.Updated < 2 then
+		return cached.Value == teamA
+	end
+
+	local teamB = getFastCharacterTeam(targetPlayer, characterModel)
+	if not teamB and (not cached or now - cached.Updated > 6) then
+		teamB = getCharacterTeamFromLeaderboard(characterModel, targetPlayer) or getCharacterTeam(targetPlayer, characterModel)
+	end
+
+	teamCheckCache[cacheKey] = {
+		Value = teamB,
+		Updated = now,
+	}
+
+	return teamB ~= nil and teamB == teamA
+end
+
 local function getClosestPlayerToMouse()
 	if not Config.AimAssistEnabled then
 		return nil
@@ -1816,7 +1963,7 @@ local function getClosestPlayerToMouse()
 			local targetPlayer = Players:FindFirstChild(charModel.Name)
 			local humanoid = charModel:FindFirstChildOfClass("Humanoid")
 			local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
-			if not (Config.AimAssistTeamCheck and isSameTeam(localPlayer, targetPlayer, charModel)) and targetPart and humanoid and humanoid.Health > 0 then
+			if not (Config.AimAssistTeamCheck and isSameTeamCached(targetPlayer, charModel)) and targetPart and humanoid and humanoid.Health > 0 then
 				local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
 				if onScreen then
 					local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
@@ -1830,6 +1977,50 @@ local function getClosestPlayerToMouse()
 	end
 	return closestPart
 end
+
+local cachedAimAssistPart = nil
+local cachedAimAssistPosition = nil
+local lastAimAssistScan = 0
+local aimAssistScanQueued = false
+
+local function refreshAimAssistTarget()
+	if not Config.AimAssistEnabled then
+		cachedAimAssistPart = nil
+		cachedAimAssistPosition = nil
+		return
+	end
+
+	cachedAimAssistPart = getClosestPlayerToMouse()
+	cachedAimAssistPosition = cachedAimAssistPart and cachedAimAssistPart.Position or nil
+end
+
+local function requestAimAssistRefresh()
+	if not Config.AimAssistEnabled or aimAssistScanQueued then
+		return
+	end
+
+	local now = os.clock()
+	if now - lastAimAssistScan < 0.12 then
+		return
+	end
+
+	lastAimAssistScan = now
+	aimAssistScanQueued = true
+	task.defer(function()
+		aimAssistScanQueued = false
+		refreshAimAssistTarget()
+	end)
+end
+
+local function getCachedAimAssistTarget()
+	return cachedAimAssistPart, cachedAimAssistPosition
+end
+
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		requestAimAssistRefresh()
+	end
+end)
 
 local CharactersFolder = workspace:WaitForChild("World"):WaitForChild("Characters")
 local OLD_ESP_NAMES = {
@@ -2137,12 +2328,12 @@ if not Config.AimAssistHookActive then
 		oldIndex = hookmetamethod(game, "__index", function(self, key)
 			if Config.AimAssistEnabled and self == mouse and (not checkcaller or not checkcaller()) then
 				if key == "Hit" then
-					local targetPart = getClosestPlayerToMouse()
-					if targetPart then
-						return CFrame.new(targetPart.Position)
+					local _, position = getCachedAimAssistTarget()
+					if position then
+						return CFrame.new(position)
 					end
 				elseif key == "Target" then
-					local targetPart = getClosestPlayerToMouse()
+					local targetPart = getCachedAimAssistTarget()
 					if targetPart then
 						return targetPart
 					end
@@ -2808,7 +2999,7 @@ createToggle(temperatureCard, 50, "Enable Temperature Nullifier", function()
 end, function(value)
 	Config.TemperatureNullifierEnabled = value
 	if value then
-		installTemperatureNullifier()
+		task.spawn(installTemperatureNullifier)
 	end
 end)
 
@@ -2860,6 +3051,12 @@ createToggle(aimCard, 50, "Enable AimAssist", function()
 	return Config.AimAssistEnabled
 end, function(value)
 	Config.AimAssistEnabled = value
+	if value then
+		requestAimAssistRefresh()
+	else
+		cachedAimAssistPart = nil
+		cachedAimAssistPosition = nil
+	end
 end)
 createToggle(aimCard, 88, "Enable FOV Size", function()
 	return Config.FOVEnabled
@@ -3080,7 +3277,7 @@ local function applyConfigEffects()
 	end
 
 	if Config.TemperatureNullifierEnabled then
-		installTemperatureNullifier()
+		task.spawn(installTemperatureNullifier)
 	end
 
 	if Config.MusketBullseyeEnabled then
@@ -3124,7 +3321,6 @@ createButton(configCard, 126, "Load Selected", function()
 	if LoadConfig(getNamedConfigFile(Config.SelectedConfigName)) then
 		refreshConfigControls()
 		applyConfigEffects()
-		SaveConfig()
 	end
 end)
 createToggle(configCard, 164, "Autoload Selected", function()
