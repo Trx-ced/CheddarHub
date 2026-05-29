@@ -21,23 +21,24 @@ _G.UI_Config = _G.UI_Config or {
 	NullifyEnabled = true,
 	AttributesEnabled = true,
 	ODMGAttributesEnabled = true,
+	MovementSafeVersion = 2,
 	CustomStats = {
-		FirearmRange = 1200,
+		FirearmRange = 500,
 		GasConservation = 0.5,
-		MeleeDamage = 6,
-		OdmHookVeloGain = 3,
+		MeleeDamage = 5000,
+		OdmHookVeloGain = 2,
 		OdmPassiveVeloGain = 2,
-		OdmVeloCap = 250,
-		PlayerCritChance = 10,
-		ReloadSpeed = 1.65,
-		RunSpeed = 9,
+		OdmVeloCap = 300,
+		PlayerCritChance = 1000,
+		ReloadSpeed = 1.5,
+		RunSpeed = 1,
 		StrengthMultiplier = 2,
 		SwingSpeed = 5,
 		TitanCritChance = 2,
-		TitanMultiplier = 0,
+		TitanMultiplier = 10,
 		VelocityScaling = 1,
 	},
-	BandageEnabled = false,
+	BandageEnabled = true,
 	BandageRemovalEnabled = false,
 	NoFallDamageEnabled = true,
 	VelocityCapperEnabled = true,
@@ -48,44 +49,50 @@ _G.UI_Config = _G.UI_Config or {
 	TextureImage = DEFAULT_TEXTURE_IMAGE,
 	TextureTransparency = DEFAULT_TEXTURE_TRANSPARENCY,
 	DamageMultiplierEnabled = true,
-	DamageMultiplier = 3,
+	DamageMultiplier = 9999,
 	NoRecoilEnabled = true,
 	MeleeHitMultiplierEnabled = true,
 	MeleeHitMultiplier = 3,
 	AimAssistEnabled = true,
-	AimAssistTeamCheck = true,
+	AimAssistTeamCheck = false,
 	FOVEnabled = true,
 	FOVRadius = 150,
 	FOVTransparency = 0.5,
-	HideFOV = true,
+	HideFOV = false,
 	PlayerESPEnabled = false,
 	PlayerESPDistanceEnabled = false,
 	PlayerESPMaxDistance = 1500,
 	PlayerESPOptimized = true,
 	PlayerESPUpdateRate = 0.25,
 	RemoveTraitsEnabled = true,
-	InfHorseStamEnabled = true,
-	MusketBullseyeEnabled = false,
+	InfHorseStamEnabled = false,
+	MusketBullseyeEnabled = true,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
 	SpeedTestTime = 16.5,
-	TitanDummyHitboxEnabled = false,
+	TitanDummyHitboxEnabled = true,
 	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
-	TitanDummyCountdownEnabled = false,
-	TitanDummyStatusEnabled = false,
-	TitanDummyShowEnabled = false,
-	RawBandageEnabled = true,
-	RawBandageHealAmount = 35,
+	TitanDummyCountdownEnabled = true,
+	TitanDummyStatusEnabled = true,
+	TitanDummyShowEnabled = true,
+	RawBandageEnabled = false,
+	RawBandageHealAmount = 25,
 	RawBandageKey = Enum.KeyCode.V,
-	BandageRemovalMacroEnabled = true,
+	BandageRemovalMacroEnabled = false,
 	BandageRemovalMacroKey = Enum.KeyCode.N,
-	BladeModsEnabled = true,
+	BladeModsEnabled = false,
 	BladeTitanMultiplierEnabled = true,
 	BladeHumanMultiplierEnabled = true,
-	BladeTitanMultiplier = 5,
-	BladeHumanMultiplier = 2,
+	BladeTitanMultiplier = 50,
+	BladeHumanMultiplier = 1.5,
 }
 
 local Config = _G.UI_Config
+
+if Config.CheddarPresetVersion ~= 4 then
+	Config.CheddarPresetVersion = 4
+	Config.ODMGAttributesEnabled = true
+	Config.VelocityCapperEnabled = true
+end
 
 Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
 if not Config.TextureImage or Config.TextureImage == "rbxassetid://0" then
@@ -101,12 +108,7 @@ Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
 Config.ODMGAttributesEnabled = Config.ODMGAttributesEnabled == true
-if Config.MovementSafeVersion ~= 2 then
-	Config.MovementSafeVersion = 2
-	Config.ODMGAttributesEnabled = false
-	Config.VelocityCapperEnabled = false
-	Config.InfHorseStamEnabled = false
-end
+Config.MovementSafeVersion = 2
 Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled ~= false
 Config.DamageMultiplier = Config.DamageMultiplier or 9999
 Config.NoRecoilEnabled = Config.NoRecoilEnabled ~= false
