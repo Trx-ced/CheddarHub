@@ -9,16 +9,41 @@ local HttpService = game:GetService("HttpService")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
+local HUB_PROFILE = "main"
+local IS_MAIN_HUB = HUB_PROFILE == "main"
+local IS_SPLIT_HUB = HUB_PROFILE == "split"
+local CONFIG_GLOBAL_KEY = "CheddarHubConfig_" .. HUB_PROFILE
+local RUN_ID_KEY = "CheddarHubRunId_" .. HUB_PROFILE
+local TRANSIENT_CONNECTIONS_KEY = "CheddarHubTransientConnections_" .. HUB_PROFILE
+
+_G[RUN_ID_KEY] = (_G[RUN_ID_KEY] or 0) + 1
+local CURRENT_RUN_ID = _G[RUN_ID_KEY]
+
+if _G[TRANSIENT_CONNECTIONS_KEY] then
+	for _, connection in ipairs(_G[TRANSIENT_CONNECTIONS_KEY]) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+end
+_G[TRANSIENT_CONNECTIONS_KEY] = {}
 
 local function isActiveRun()
-	return true
+	return _G[RUN_ID_KEY] == CURRENT_RUN_ID
 end
 
 local function trackConnection(connection)
 	return connection
 end
 
-_G.UI_Config = _G.UI_Config or {
+local function trackTransientConnection(connection)
+	if connection then
+		_G[TRANSIENT_CONNECTIONS_KEY][#_G[TRANSIENT_CONNECTIONS_KEY] + 1] = connection
+	end
+	return connection
+end
+
+_G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	NapeEnabled = false,
 	NapeSize = Vector3.new(20, 20, 20),
 	NapeOffset = Vector3.new(0, 4, 5),
@@ -106,7 +131,7 @@ _G.UI_Config = _G.UI_Config or {
 	AutoLoadConfig = false,
 }
 
-local Config = _G.UI_Config
+local Config = _G[CONFIG_GLOBAL_KEY]
 local syncConfigInputs = function() end
 
 local DEFAULT_DISABLED_CONFIG_KEYS = {
@@ -151,7 +176,7 @@ local function applyDefaultDisabledConfig()
 	end
 end
 
-local CONFIG_FOLDER = "CheddarHub"
+local CONFIG_FOLDER = IS_MAIN_HUB and "CheddarHub_Main" or "CheddarHub_Split"
 local CONFIG_AUTOSAVE_FILE = CONFIG_FOLDER .. "/autosave.json"
 local CONFIG_MANUAL_FILE = CONFIG_FOLDER .. "/default.json"
 local CONFIG_SETTINGS_FILE = CONFIG_FOLDER .. "/settings.json"
@@ -481,6 +506,8 @@ local function applyCustomStats()
 	end
 end
 
+local titanHitboxState = setmetatable({}, { __mode = "k" })
+
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
 		return
@@ -496,8 +523,13 @@ local function applyTitanExpansion(titanModel)
 		if not part or not part:IsA("BasePart") then
 			return
 		end
+		local existingWeld = part:FindFirstChild("CheddarHitboxWeld")
+		local state = titanHitboxState[part]
+		if state and state.Root == root and state.Size == size and state.Offset == offset and existingWeld then
+			return
+		end
 		for _, obj in ipairs(part:GetDescendants()) do
-			if obj:IsA("JointInstance") or obj:IsA("Weld") then
+			if obj:IsA("JointInstance") or obj:IsA("Weld") or obj.Name == "CheddarHitboxWeld" then
 				obj:Destroy()
 			end
 		end
@@ -505,9 +537,15 @@ local function applyTitanExpansion(titanModel)
 		part.CanCollide = false
 		part.CFrame = root.CFrame * CFrame.new(offset)
 		local weld = Instance.new("WeldConstraint")
+		weld.Name = "CheddarHitboxWeld"
 		weld.Part0 = root
 		weld.Part1 = part
 		weld.Parent = part
+		titanHitboxState[part] = {
+			Root = root,
+			Size = size,
+			Offset = offset,
+		}
 	end
 
 	if Config.NapeEnabled then
@@ -530,8 +568,26 @@ local function applyTitanExpansion(titanModel)
 	end
 end
 
+local World = IS_MAIN_HUB and workspace:WaitForChild("World") or workspace:FindFirstChild("World")
+local TitansFolder = World and (IS_MAIN_HUB and World:WaitForChild("Titans") or World:FindFirstChild("Titans")) or nil
+
+local function applyAllTitanExpansion()
+	if not TitansFolder then
+		return
+	end
+	for _, titan in ipairs(TitansFolder:GetChildren()) do
+		task.defer(applyTitanExpansion, titan)
+	end
+end
+
 local function stripPhysics(part)
 	if Config.NullifyEnabled and part:IsA("BasePart") then
+		if part.Size == Vector3.new(0, 0, 0)
+			and part.CanCollide == false
+			and part.CanTouch == false
+			and part.CanQuery == false then
+			return
+		end
 		part.Size = Vector3.new(0, 0, 0)
 		part.CanCollide = false
 		part.CanTouch = false
@@ -540,51 +596,67 @@ local function stripPhysics(part)
 end
 
 local monitoredNullifyFolders = setmetatable({}, { __mode = "k" })
+local monitoredNullifyTitans = setmetatable({}, { __mode = "k" })
 
 local function monitorFolder(folder)
+	for _, part in ipairs(folder:GetChildren()) do
+		stripPhysics(part)
+	end
 	if monitoredNullifyFolders[folder] then
 		return
 	end
 	monitoredNullifyFolders[folder] = true
-	for _, part in ipairs(folder:GetChildren()) do
-		stripPhysics(part)
-	end
-	trackConnection(folder.ChildAdded:Connect(stripPhysics))
+	trackTransientConnection(folder.ChildAdded:Connect(stripPhysics))
 end
 
 local function optimizeTitanNullify(titanModel)
 	if not titanModel:IsA("Model") then
 		return
 	end
-	task.spawn(function()
-		local hitboxes = titanModel:WaitForChild("Hitboxes", 5)
-		if hitboxes then
-			monitorFolder(hitboxes)
+	local function handleNullifyFolder(child)
+		if child.Name == "Hitboxes" or child.Name == "Detectors" then
+			monitorFolder(child)
 		end
-	end)
-	task.spawn(function()
-		local detectors = titanModel:WaitForChild("Detectors", 5)
-		if detectors then
-			monitorFolder(detectors)
+	end
+
+	for _, child in ipairs(titanModel:GetChildren()) do
+		handleNullifyFolder(child)
+	end
+
+	if monitoredNullifyTitans[titanModel] then
+		return
+	end
+	monitoredNullifyTitans[titanModel] = true
+	trackTransientConnection(titanModel.ChildAdded:Connect(function(child)
+		if Config.NullifyEnabled then
+			handleNullifyFolder(child)
 		end
-	end)
+	end))
 end
 
-local World = workspace:WaitForChild("World")
-local TitansFolder = World:WaitForChild("Titans")
-
-trackConnection(TitansFolder.ChildAdded:Connect(function(child)
-	if Config.NapeEnabled or Config.EyeEnabled then
-		applyTitanExpansion(child)
+local function applyAllTitanNullify()
+	if not TitansFolder then
+		return
 	end
-	if Config.NullifyEnabled then
-		optimizeTitanNullify(child)
+	for _, titan in ipairs(TitansFolder:GetChildren()) do
+		task.defer(optimizeTitanNullify, titan)
 	end
-end))
+end
 
-if clientInfo then
+if IS_MAIN_HUB then
+	trackTransientConnection(TitansFolder.ChildAdded:Connect(function(child)
+		if Config.NapeEnabled or Config.EyeEnabled then
+			applyTitanExpansion(child)
+		end
+		if Config.NullifyEnabled then
+			optimizeTitanNullify(child)
+		end
+	end))
+end
+
+if IS_MAIN_HUB and clientInfo then
 	task.spawn(function()
-		while task.wait(0.35) do
+		while isActiveRun() and task.wait(0.35) do
 			if not clientInfo.Parent then
 				break
 			end
@@ -611,23 +683,28 @@ local function lockBandageCount(character)
 	if Config.BandageEnabled then
 		character:SetAttribute("BandageCount", 1)
 	end
-	trackConnection(character:GetAttributeChangedSignal("BandageCount"):Connect(function()
+	trackTransientConnection(character:GetAttributeChangedSignal("BandageCount"):Connect(function()
 		if Config.BandageEnabled and character:GetAttribute("BandageCount") ~= 1 then
 			character:SetAttribute("BandageCount", 1)
 		end
 	end))
 end
 
-if localPlayer.Character then
+if IS_SPLIT_HUB and localPlayer.Character then
 	lockBandageCount(localPlayer.Character)
 end
 
-trackConnection(localPlayer.CharacterAdded:Connect(function(character)
-	task.wait(0.5)
-	lockBandageCount(character)
-end))
+if IS_SPLIT_HUB then
+	trackTransientConnection(localPlayer.CharacterAdded:Connect(function(character)
+		task.wait(0.5)
+		if not isActiveRun() then
+			return
+		end
+		lockBandageCount(character)
+	end))
+end
 
-if not Config.BandageTalentHooked then
+if IS_SPLIT_HUB and not Config.BandageTalentHooked then
 	task.spawn(function()
 		local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
 		if clientFramework then
@@ -659,7 +736,7 @@ if not Config.BandageTalentHooked then
 	end)
 end
 
-if not Config.BandageNetworkHooked then
+if IS_SPLIT_HUB and not Config.BandageNetworkHooked then
 	Config.BandageNetworkHooked = true
 	local oldNameCall
 	oldNameCall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -679,7 +756,7 @@ if not Config.BandageNetworkHooked then
 	end)
 end
 
-if not Config.BandageRemovalHooksActive then
+if IS_SPLIT_HUB and not Config.BandageRemovalHooksActive then
 	local installed = pcall(function()
 		local oldGetRemovalAttribute
 		oldGetRemovalAttribute = hookfunction(Instance.new("Folder").GetAttribute, function(self, attributeName)
@@ -737,7 +814,7 @@ if not Config.BandageRemovalHooksActive then
 	end
 end
 
-if not Config.TraitManagerHooked then
+if IS_SPLIT_HUB and not Config.TraitManagerHooked then
 	task.spawn(function()
 		local installed = pcall(function()
 			local clientFrameworkFile = ReplicatedStorage:FindFirstChild("ClientFramework")
@@ -789,7 +866,7 @@ if not Config.TraitManagerHooked then
 	end)
 end
 
-if not Config.HorseStaminaHooked then
+if IS_MAIN_HUB and not Config.HorseStaminaHooked then
 	local tweenHooked = pcall(function()
 		local oldCreate
 		oldCreate = hookmetamethod(TweenService, "__index", function(self, key)
@@ -805,11 +882,15 @@ if not Config.HorseStaminaHooked then
 		end)
 	end)
 
+	Config.HorseStaminaHooked = tweenHooked
+end
+
+if IS_MAIN_HUB then
 	task.spawn(function()
 		local success, clientFramework = pcall(function()
 			return require(ReplicatedStorage:WaitForChild("ClientFramework", 5))
 		end)
-		trackConnection(RunService.Heartbeat:Connect(function()
+		trackTransientConnection(RunService.Heartbeat:Connect(function()
 			if not Config.InfHorseStamEnabled then
 				return
 			end
@@ -832,8 +913,6 @@ if not Config.HorseStaminaHooked then
 			end
 		end))
 	end)
-
-	Config.HorseStaminaHooked = tweenHooked
 end
 
 local function runObbyOnce()
@@ -978,14 +1057,16 @@ local function updateMusketBullseyes()
 	end
 end
 
-task.spawn(function()
-	updateMusketBullseyes()
-	while task.wait(2) do
-		if Config.MusketBullseyeEnabled then
-			updateMusketBullseyes()
+if IS_SPLIT_HUB then
+	task.spawn(function()
+		updateMusketBullseyes()
+		while task.wait(2) do
+			if Config.MusketBullseyeEnabled then
+				updateMusketBullseyes()
+			end
 		end
-	end
-end)
+	end)
+end
 
 local titanDummyOriginals = {}
 local titanDummyConnections = {}
@@ -1131,16 +1212,18 @@ local function updateTitanDummies()
 	end
 end
 
-task.spawn(function()
-	updateTitanDummies()
-	trackConnection(CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
-		task.wait(0.5)
-		applyTitanDummy(dummy)
-	end))
-	while task.wait(2) do
+if IS_SPLIT_HUB then
+	task.spawn(function()
 		updateTitanDummies()
-	end
-end)
+		trackConnection(CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
+			task.wait(0.5)
+			applyTitanDummy(dummy)
+		end))
+		while task.wait(2) do
+			updateTitanDummies()
+		end
+	end)
+end
 
 local function instantRefillAll()
 	for index, obj in pairs(getgc(true)) do
@@ -1431,12 +1514,12 @@ local function startNoTalentCooldownLoop()
 		end
 
 		local playerObject = clientFramework.PlayerObject
-		while Config.NoTalentCooldownEnabled and not playerObject do
+		while isActiveRun() and Config.NoTalentCooldownEnabled and not playerObject do
 			task.wait(0.5)
 			playerObject = clientFramework.PlayerObject
 		end
 
-		while Config.NoTalentCooldownEnabled do
+		while isActiveRun() and Config.NoTalentCooldownEnabled do
 			if playerObject and playerObject.Cooldowns and type(playerObject.ResetAllCooldowns) == "function" then
 				pcall(function()
 					playerObject:ResetAllCooldowns(true)
@@ -1506,11 +1589,12 @@ local function disableFallDamageLoop()
 	return false
 end
 
-if Config.NoFallDamageEnabled then
+if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
 
-trackConnection(RunService.Heartbeat:Connect(function()
+if IS_MAIN_HUB then
+trackTransientConnection(RunService.Heartbeat:Connect(function()
 	if not Config.VelocityCapperEnabled then
 		return
 	end
@@ -1555,6 +1639,7 @@ trackConnection(RunService.Heartbeat:Connect(function()
 		end
 	end
 end))
+end
 
 local setPlayerESPEnabled
 local startPlayerESP
@@ -1569,6 +1654,7 @@ local MELEE_DAMAGE_KEYS = {
 	"HitDamage",
 }
 
+if IS_MAIN_HUB then
 do
 task.spawn(function()
 	local hooked = false
@@ -1685,8 +1771,23 @@ task.spawn(function()
 		end
 	end
 end)
+end
+end
 
 local fovCircle
+if IS_MAIN_HUB then
+	if _G.CheddarHubFOVCircle then
+		pcall(function()
+			_G.CheddarHubFOVCircle.Visible = false
+			if _G.CheddarHubFOVCircle.Remove then
+				_G.CheddarHubFOVCircle:Remove()
+			elseif _G.CheddarHubFOVCircle.Destroy then
+				_G.CheddarHubFOVCircle:Destroy()
+			end
+		end)
+		_G.CheddarHubFOVCircle = nil
+	end
+
 pcall(function()
 	if Drawing and Drawing.new then
 		fovCircle = Drawing.new("Circle")
@@ -1695,10 +1796,11 @@ pcall(function()
 		fovCircle.Thickness = 1.5
 		fovCircle.NumSides = 64
 		fovCircle.Filled = false
+		_G.CheddarHubFOVCircle = fovCircle
 	end
 end)
 
-trackConnection(RunService.RenderStepped:Connect(function()
+	trackTransientConnection(RunService.RenderStepped:Connect(function()
 	if not fovCircle then
 		return
 	end
@@ -1711,6 +1813,7 @@ trackConnection(RunService.RenderStepped:Connect(function()
 		fovCircle.Visible = false
 	end
 end))
+end
 
 local function getCharactersFolder()
 	local world = workspace:FindFirstChild("World")
@@ -2034,13 +2137,15 @@ local function getCachedAimAssistTarget()
 	return cachedAimAssistPart, cachedAimAssistPosition
 end
 
-trackConnection(UserInputService.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement then
-		requestAimAssistRefresh()
-	end
-end))
+if IS_MAIN_HUB then
+	trackTransientConnection(UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			requestAimAssistRefresh()
+		end
+	end))
+end
 
-local CharactersFolder = workspace:WaitForChild("World"):WaitForChild("Characters")
+local CharactersFolder = IS_MAIN_HUB and workspace:WaitForChild("World"):WaitForChild("Characters") or nil
 local OLD_ESP_NAMES = {
 	"EspGui",
 	"EspGUI",
@@ -2064,6 +2169,9 @@ local monitoredESPPlayers = {}
 local PlayerESPStarted = false
 local PLAYER_ESP_TEXT_SIZE = 14
 local PLAYER_ESP_REFRESH_RATE = 0.5
+
+setmetatable(activeBillboards, { __mode = "kv" })
+setmetatable(monitoredESPPlayers, { __mode = "k" })
 
 local function getESPFramework()
 	if espClientFramework ~= nil then
@@ -2127,15 +2235,20 @@ local function monitorESPPlayer(playerObject)
 	end
 	monitoredESPPlayers[playerObject] = true
 	cacheESPData(playerObject)
-	trackConnection(playerObject:GetAttributeChangedSignal("Team"):Connect(function()
+	local function forgetESPPlayer()
+		monitoredESPPlayers[playerObject] = nil
+		cachedPlayerData[playerObject.Name] = nil
+	end
+	trackTransientConnection(playerObject:GetAttributeChangedSignal("Team"):Connect(function()
 		cacheESPData(playerObject)
 	end))
-	trackConnection(playerObject:GetAttributeChangedSignal("FirstName"):Connect(function()
+	trackTransientConnection(playerObject:GetAttributeChangedSignal("FirstName"):Connect(function()
 		cacheESPData(playerObject)
 	end))
-	trackConnection(playerObject:GetAttributeChangedSignal("LastName"):Connect(function()
+	trackTransientConnection(playerObject:GetAttributeChangedSignal("LastName"):Connect(function()
 		cacheESPData(playerObject)
 	end))
+	trackTransientConnection(playerObject.Destroying:Connect(forgetESPPlayer))
 end
 
 local function scanESPFrameworkPlayers()
@@ -2208,8 +2321,13 @@ local function setupModelESP(model)
 	if existingESP then
 		local existingLabel = existingESP:FindFirstChild("EspText")
 		if existingLabel then
+			if existingLabel.Text == "" or existingLabel.Text == "Label" or existingLabel.Text == "Label1" then
+				existingLabel.Text = model.Name
+			end
 			existingESP.Enabled = Config.PlayerESPEnabled
 			activeBillboards[model] = existingLabel
+		else
+			existingESP:Destroy()
 		end
 		return
 	end
@@ -2229,6 +2347,8 @@ local function setupModelESP(model)
 	textLabel.BackgroundTransparency = 1
 	textLabel.TextSize = PLAYER_ESP_TEXT_SIZE
 	textLabel.Font = Enum.Font.RobotoMono
+	textLabel.Text = model.Name
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	textLabel.TextStrokeTransparency = 0.15
 	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	textLabel.Parent = billboard
@@ -2262,6 +2382,7 @@ local function clearPlayerESP()
 end
 
 local function scanPlayerESP()
+	scanESPFrameworkPlayers()
 	for _, model in ipairs(CharactersFolder:GetChildren()) do
 		task.spawn(setupModelESP, model)
 	end
@@ -2376,7 +2497,7 @@ startPlayerESP = function()
 	end)
 end
 
-if not Config.AimAssistHookActive then
+if IS_MAIN_HUB and not Config.AimAssistHookActive then
 	local installed = pcall(function()
 		local mouse = localPlayer:GetMouse()
 		local oldIndex
@@ -2400,7 +2521,6 @@ if not Config.AimAssistHookActive then
 	if installed then
 		Config.AimAssistHookActive = true
 	end
-end
 end
 
 local COLORS = {
@@ -2515,7 +2635,7 @@ local title = mk("TextLabel", {
 	Position = UDim2.new(0, 24, 0, 10),
 	Size = UDim2.new(1, -100, 0, 22),
 	BackgroundTransparency = 1,
-	Text = "CheddarCheeseHub | Verfall",
+	Text = IS_MAIN_HUB and "CheddarCheeseHub | Verfall" or "CheddarCheeseHub Split | Verfall",
 	TextColor3 = COLORS.TEXT,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.GothamBold,
@@ -2528,7 +2648,7 @@ mk("TextLabel", {
 	Position = UDim2.new(0, 25, 0, 33),
 	Size = UDim2.new(1, -100, 0, 18),
 	BackgroundTransparency = 1,
-	Text = "Best AOT CC Cheating Hub",
+	Text = IS_MAIN_HUB and "Main AOT CC Cheating Hub" or "Utility AOT CC Cheating Hub",
 	TextColor3 = COLORS.SUB,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.Gotham,
@@ -2912,48 +3032,77 @@ local function createButton(parent, y, text, callback)
 	return button
 end
 
-local mainPage = createPage("Main")
-local attrPage = createPage("Attributes")
+local refreshRefillBind
+local refreshPlayerESPBind
+local refreshRawBandageBind
+local refreshBandageRemovalBind
+
+local mainPage = IS_MAIN_HUB and createPage("Main") or nil
+local attrPage = IS_MAIN_HUB and createPage("Attributes") or nil
 local miscPage = createPage("Misc")
-createPage("Firearms")
-local visualPage = createPage("Visual")
+if IS_MAIN_HUB then
+	createPage("Firearms")
+end
+local visualPage = IS_MAIN_HUB and createPage("Visual") or nil
 local otherPage = createPage("Other")
-local practicalPage = createPage("Practical")
-local overpoweredPage = createPage("Overpowered")
+local practicalPage = IS_SPLIT_HUB and createPage("Practical") or nil
+local overpoweredPage = IS_MAIN_HUB and createPage("Overpowered") or nil
 local settingsPage = createPage("Settings")
 
-createTab("Main", 1)
-createTab("Attributes", 2)
-createTab("Misc", 3)
-createTab("Firearms", 4)
-createTab("Visual", 5)
-createTab("Other", 6)
-createTab("Practical", 7)
-createTab("Overpowered", 8)
-createTab("Settings", 9)
+if IS_MAIN_HUB then
+	createTab("Main", 1)
+	createTab("Attributes", 2)
+	createTab("Misc", 3)
+	createTab("Firearms", 4)
+	createTab("Visual", 5)
+	createTab("Other", 6)
+	createTab("Overpowered", 7)
+	createTab("Settings", 8)
+else
+	createTab("Misc", 1)
+	createTab("Other", 2)
+	createTab("Practical", 3)
+	createTab("Settings", 4)
+end
 
+if IS_MAIN_HUB then
 local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
 	return Config.NapeEnabled
 end, function(value)
 	Config.NapeEnabled = value
+	if value then
+		applyAllTitanExpansion()
+	end
 end)
 createTextBox(titanCard, 88, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
 	Config.NapeSize = parseVector(text, Config.NapeSize)
 	box.Text = string.format("%s,%s,%s", Config.NapeSize.X, Config.NapeSize.Y, Config.NapeSize.Z)
+	if Config.NapeEnabled then
+		applyAllTitanExpansion()
+	end
 end)
 createTextBox(titanCard, 126, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
 	Config.NapeOffset = parseVector(text, Config.NapeOffset)
 	box.Text = string.format("%s,%s,%s", Config.NapeOffset.X, Config.NapeOffset.Y, Config.NapeOffset.Z)
+	if Config.NapeEnabled then
+		applyAllTitanExpansion()
+	end
 end)
 createToggle(titanCard, 164, "Enable Eye Extender", function()
 	return Config.EyeEnabled
 end, function(value)
 	Config.EyeEnabled = value
+	if value then
+		applyAllTitanExpansion()
+	end
 end)
 createTextBox(titanCard, 202, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
 	Config.EyeSize = parseVector(text, Config.EyeSize)
 	box.Text = string.format("%s,%s,%s", Config.EyeSize.X, Config.EyeSize.Y, Config.EyeSize.Z)
+	if Config.EyeEnabled then
+		applyAllTitanExpansion()
+	end
 end)
 
 local physicsCard = createCard(mainPage, "Nullify", 86)
@@ -2962,9 +3111,7 @@ createToggle(physicsCard, 48, "Nullify Titan Hitboxes", function()
 end, function(value)
 	Config.NullifyEnabled = value
 	if value then
-		for _, titan in ipairs(TitansFolder:GetChildren()) do
-			task.spawn(optimizeTitanNullify, titan)
-		end
+		applyAllTitanNullify()
 	end
 end)
 
@@ -3026,6 +3173,37 @@ for index, statName in ipairs(stats) do
 	createStatToggleBox(statCard, 42 + index * 36, statName)
 end
 
+local resourcesCard = createCard(miscPage, "Resources", 94)
+refreshRefillBind = createKeybind(resourcesCard, 50, "Instant Refill Key", function()
+	return Config.RefillKey
+end, function(value)
+	Config.RefillKey = value
+end)
+
+local safetyCard = createCard(miscPage, "Fall Damage", 94)
+createToggle(safetyCard, 50, "Enable No Fall Damage", function()
+	return Config.NoFallDamageEnabled
+end, function(value)
+	Config.NoFallDamageEnabled = value
+	if value then
+		task.spawn(disableFallDamageLoop)
+	end
+end)
+end
+
+if IS_SPLIT_HUB then
+local temperatureCard = createCard(miscPage, "Temperature Nullifier", 94)
+createToggle(temperatureCard, 50, "Enable Temperature Nullifier", function()
+	return Config.TemperatureNullifierEnabled
+end, function(value)
+	Config.TemperatureNullifierEnabled = value
+	if value then
+		task.spawn(installTemperatureNullifier)
+	end
+end)
+end
+
+if IS_SPLIT_HUB then
 local bandageCard = createCard(miscPage, "Bandage Controls", 166)
 createToggle(bandageCard, 50, "Enable Bandage Modification", function()
 	return Config.BandageEnabled
@@ -3050,34 +3228,9 @@ createToggle(removalCard, 50, "Enable Bandage Removal", function()
 end, function(value)
 	Config.BandageRemovalEnabled = value
 end)
+end
 
-local resourcesCard = createCard(miscPage, "Resources", 94)
-local refreshRefillBind = createKeybind(resourcesCard, 50, "Instant Refill Key", function()
-	return Config.RefillKey
-end, function(value)
-	Config.RefillKey = value
-end)
-
-local safetyCard = createCard(miscPage, "Fall Damage", 94)
-createToggle(safetyCard, 50, "Enable No Fall Damage", function()
-	return Config.NoFallDamageEnabled
-end, function(value)
-	Config.NoFallDamageEnabled = value
-	if value then
-		task.spawn(disableFallDamageLoop)
-	end
-end)
-
-local temperatureCard = createCard(miscPage, "Temperature Nullifier", 94)
-createToggle(temperatureCard, 50, "Enable Temperature Nullifier", function()
-	return Config.TemperatureNullifierEnabled
-end, function(value)
-	Config.TemperatureNullifierEnabled = value
-	if value then
-		task.spawn(installTemperatureNullifier)
-	end
-end)
-
+if IS_MAIN_HUB then
 local velocityCard = createCard(miscPage, "Velocity Capper", 132)
 createToggle(velocityCard, 50, "Enable Velocity Capper", function()
 	return Config.VelocityCapperEnabled
@@ -3174,26 +3327,32 @@ createTextBox(playerESPCard, 88, "Max Distance", Config.PlayerESPMaxDistance, fu
 	end
 	box.Text = tostring(Config.PlayerESPMaxDistance)
 end)
-local refreshPlayerESPBind = createKeybind(playerESPCard, 126, "Toggle ESP Key", function()
+refreshPlayerESPBind = createKeybind(playerESPCard, 126, "Toggle ESP Key", function()
 	return Config.PlayerESPKey
 end, function(value)
 	Config.PlayerESPKey = value
 end)
+end
 
+if IS_SPLIT_HUB then
 local traitsCard = createCard(otherPage, "Traits", 94)
 createToggle(traitsCard, 50, "Remove Traits", function()
 	return Config.RemoveTraitsEnabled
 end, function(value)
 	Config.RemoveTraitsEnabled = value
 end)
+end
 
+if IS_MAIN_HUB then
 local horseCard = createCard(otherPage, "Horse", 94)
 createToggle(horseCard, 50, "Inf Horse Stam", function()
 	return Config.InfHorseStamEnabled
 end, function(value)
 	Config.InfHorseStamEnabled = value
 end)
+end
 
+if IS_SPLIT_HUB then
 local obbyCard = createCard(practicalPage, "Obby", 94)
 createButton(obbyCard, 50, "Run Obby", runObbyOnce)
 
@@ -3249,7 +3408,9 @@ end, function(value)
 	Config.TitanDummyShowEnabled = value
 	updateTitanDummies()
 end)
+end
 
+if IS_MAIN_HUB then
 local rawBandageCard = createCard(overpoweredPage, "Raw Bandage Heal", 208)
 createToggle(rawBandageCard, 50, "Raw Bandage Heal", function()
 	return Config.RawBandageEnabled
@@ -3263,7 +3424,7 @@ createTextBox(rawBandageCard, 88, "Heal Amount", Config.RawBandageHealAmount, fu
 	Config.RawBandageHealAmount = tonumber(text) or Config.RawBandageHealAmount
 	box.Text = tostring(Config.RawBandageHealAmount)
 end)
-local refreshRawBandageBind = createKeybind(rawBandageCard, 126, "Raw Heal Key", function()
+refreshRawBandageBind = createKeybind(rawBandageCard, 126, "Raw Heal Key", function()
 	return Config.RawBandageKey
 end, function(value)
 	Config.RawBandageKey = value
@@ -3276,7 +3437,7 @@ createToggle(bandageRemovalMacroCard, 50, "Enable Bandage Removal Macro", functi
 end, function(value)
 	Config.BandageRemovalMacroEnabled = value
 end)
-local refreshBandageRemovalBind = createKeybind(bandageRemovalMacroCard, 88, "Removal Key", function()
+refreshBandageRemovalBind = createKeybind(bandageRemovalMacroCard, 88, "Removal Key", function()
 	return Config.BandageRemovalMacroKey
 end, function(value)
 	Config.BandageRemovalMacroKey = value
@@ -3322,6 +3483,7 @@ createTextBox(bladeModsCard, 202, "Human Damage Mult", Config.BladeHumanMultipli
 		task.spawn(installBladeMods)
 	end
 end)
+end
 
 local interfaceCard = createCard(settingsPage, "Interface", 96)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
@@ -3331,49 +3493,47 @@ end, function(value)
 end)
 
 local function applyConfigEffects()
-	if Config.NapeEnabled or Config.EyeEnabled then
-		for _, titan in ipairs(TitansFolder:GetChildren()) do
-			task.spawn(applyTitanExpansion, titan)
-		end
+	if IS_MAIN_HUB and (Config.NapeEnabled or Config.EyeEnabled) then
+		applyAllTitanExpansion()
 	end
 
-	if Config.NullifyEnabled then
-		for _, titan in ipairs(TitansFolder:GetChildren()) do
-			task.spawn(optimizeTitanNullify, titan)
-		end
+	if IS_MAIN_HUB and Config.NullifyEnabled then
+		applyAllTitanNullify()
 	end
 
-	if Config.BandageEnabled and localPlayer.Character then
+	if IS_MAIN_HUB and Config.BandageEnabled and localPlayer.Character then
 		localPlayer.Character:SetAttribute("BandageCount", 1)
 	end
 
-	applyCustomStats()
+	if IS_MAIN_HUB then
+		applyCustomStats()
+	end
 
-	if Config.NoFallDamageEnabled then
+	if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 		task.spawn(disableFallDamageLoop)
 	end
 
-	if Config.TemperatureNullifierEnabled then
+	if IS_SPLIT_HUB and Config.TemperatureNullifierEnabled then
 		task.spawn(installTemperatureNullifier)
 	end
 
-	if Config.MusketBullseyeEnabled then
+	if IS_SPLIT_HUB and Config.MusketBullseyeEnabled then
 		updateMusketBullseyes()
 	end
 
-	if Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled then
+	if IS_SPLIT_HUB and (Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled) then
 		updateTitanDummies()
 	end
 
-	if Config.BladeModsEnabled then
+	if IS_MAIN_HUB and Config.BladeModsEnabled then
 		task.spawn(installBladeMods)
 	end
 
-	if Config.NoTalentCooldownEnabled then
+	if IS_MAIN_HUB and Config.NoTalentCooldownEnabled then
 		startNoTalentCooldownLoop()
 	end
 
-	if setPlayerESPEnabled then
+	if IS_MAIN_HUB and setPlayerESPEnabled then
 		setPlayerESPEnabled(Config.PlayerESPEnabled == true)
 	end
 end
@@ -3461,14 +3621,14 @@ trackConnection(topBar.InputBegan:Connect(function(input)
 	end
 end))
 
-trackConnection(UserInputService.InputChanged:Connect(function(input)
+trackTransientConnection(UserInputService.InputChanged:Connect(function(input)
 	if state.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 		state.DragDelta = input.Position - state.DragStart
 		state.DragDirty = true
 	end
 end))
 
-trackConnection(RunService.RenderStepped:Connect(function()
+trackTransientConnection(RunService.RenderStepped:Connect(function()
 	if state.Dragging and state.DragDirty and state.StartPosition then
 		local delta = state.DragDelta
 		main.Position = UDim2.new(
@@ -3481,7 +3641,7 @@ trackConnection(RunService.RenderStepped:Connect(function()
 	end
 end))
 
-trackConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+trackTransientConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if state.Capturing and input.UserInputType == Enum.UserInputType.Keyboard then
 		local setter = state.CaptureSetter
 		local refresh = state.CaptureRefresh
@@ -3495,11 +3655,11 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, gameProcesse
 		if refresh then
 			refresh()
 		end
-		refreshToggleBind()
-		refreshRefillBind()
-		refreshRawBandageBind()
-		refreshBandageRemovalBind()
-		refreshPlayerESPBind()
+		if refreshToggleBind then refreshToggleBind() end
+		if refreshRefillBind then refreshRefillBind() end
+		if refreshRawBandageBind then refreshRawBandageBind() end
+		if refreshBandageRemovalBind then refreshBandageRemovalBind() end
+		if refreshPlayerESPBind then refreshPlayerESPBind() end
 		return
 	end
 
@@ -3509,20 +3669,22 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, gameProcesse
 
 	if input.KeyCode == Config.ToggleUIKey then
 		setWindowOpen(not state.Open)
-	elseif input.KeyCode == Config.RefillKey then
+	elseif IS_MAIN_HUB and input.KeyCode == Config.RefillKey then
 		instantRefillAll()
-	elseif input.KeyCode == Config.RawBandageKey then
+	elseif IS_MAIN_HUB and input.KeyCode == Config.RawBandageKey then
 		fireRawBandageHeal()
-	elseif input.KeyCode == Config.BandageRemovalMacroKey then
+	elseif IS_MAIN_HUB and input.KeyCode == Config.BandageRemovalMacroKey then
 		task.spawn(executeBandageRemoval)
-	elseif input.KeyCode == Config.PlayerESPKey then
+	elseif IS_MAIN_HUB and input.KeyCode == Config.PlayerESPKey and setPlayerESPEnabled then
 		setPlayerESPEnabled(not Config.PlayerESPEnabled)
 		refreshConfigControls()
 		SaveConfig()
 	end
 end))
 
-switchPage("Main")
+switchPage(IS_MAIN_HUB and "Main" or "Misc")
 setWindowOpen(true)
-task.spawn(startPlayerESP)
+if IS_MAIN_HUB then
+	task.spawn(startPlayerESP)
+end
 applyConfigEffects()
