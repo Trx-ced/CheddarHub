@@ -2287,6 +2287,76 @@ local function getESPHealthColor(humanoid)
 	return Color3.fromRGB(255, 0, 50)
 end
 
+local function getLocalESPRoot()
+	local character = localPlayer.Character or workspace:FindFirstChild(localPlayer.Name)
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root then
+		return root
+	end
+
+	for _, folder in ipairs(getCharacterFolders()) do
+		local model = folder:FindFirstChild(localPlayer.Name)
+		root = model and model:FindFirstChild("HumanoidRootPart")
+		if root then
+			return root
+		end
+	end
+
+	return nil
+end
+
+local function updateESPLabel(model, textLabel)
+	if not model or not textLabel then
+		return false
+	end
+
+	local root = model:FindFirstChild("HumanoidRootPart")
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local billboard = textLabel.Parent
+	if not model.Parent or not billboard then
+		activeBillboards[model] = nil
+		return false
+	end
+
+	if not root or not humanoid or humanoid.Health <= 0 then
+		billboard.Enabled = false
+		return false
+	end
+
+	local localRoot = getLocalESPRoot()
+	local distance
+	if localRoot then
+		distance = math.round((root.Position - localRoot.Position).Magnitude)
+		if distance > Config.PlayerESPMaxDistance then
+			billboard.Enabled = false
+			return false
+		end
+	end
+
+	billboard.Enabled = Config.PlayerESPEnabled == true
+	local data = cachedPlayerData[model.Name]
+	local branch = data and data.Branch or "No Branch"
+	local loreName = data and data.LoreName or "Unknown"
+	local health = math.round(humanoid.Health)
+	local distanceText = distance and (tostring(distance) .. "studs") or "?studs"
+	textLabel.Text = string.format("%s | %s | HP: %d | %s | %s", model.Name, loreName, health, distanceText, branch)
+
+	local modTag = billboard:FindFirstChild("ModTag")
+	if branch == "Staff Team" then
+		textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+		if modTag then
+			modTag.Visible = true
+		end
+	else
+		textLabel.TextColor3 = getESPHealthColor(humanoid)
+		if modTag then
+			modTag.Visible = false
+		end
+	end
+
+	return true
+end
+
 local function removePlayerESP(model)
 	if not model then
 		return
@@ -2326,6 +2396,7 @@ local function setupModelESP(model)
 			end
 			existingESP.Enabled = Config.PlayerESPEnabled
 			activeBillboards[model] = existingLabel
+			updateESPLabel(model, existingLabel)
 		else
 			existingESP:Destroy()
 		end
@@ -2369,6 +2440,7 @@ local function setupModelESP(model)
 
 	billboard.Parent = root
 	activeBillboards[model] = textLabel
+	updateESPLabel(model, textLabel)
 end
 
 local function clearPlayerESP()
@@ -2448,50 +2520,8 @@ startPlayerESP = function()
 				continue
 			end
 
-			local localChar = localPlayer.Character or workspace:FindFirstChild(localPlayer.Name)
-			local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
-			if not localRoot then
-				continue
-			end
-			local localPos = localRoot.Position
-
 			for model, textLabel in pairs(activeBillboards) do
-				local root = model:FindFirstChild("HumanoidRootPart")
-				local humanoid = model:FindFirstChildOfClass("Humanoid")
-				local billboard = textLabel.Parent
-
-				if not model.Parent or not billboard then
-					activeBillboards[model] = nil
-				elseif root and humanoid and humanoid.Health > 0 then
-					local distance = math.round((root.Position - localPos).Magnitude)
-					if distance > Config.PlayerESPMaxDistance then
-						billboard.Enabled = false
-						continue
-					end
-
-					billboard.Enabled = true
-					local data = cachedPlayerData[model.Name]
-					local branch = data and data.Branch or "No Branch"
-					local loreName = data and data.LoreName or "Unknown"
-					local health = math.round(humanoid.Health)
-
-					textLabel.Text = string.format("%s | %s | HP: %d | %dstuds | %s", model.Name, loreName, health, distance, branch)
-
-					local modTag = billboard:FindFirstChild("ModTag")
-					if branch == "Staff Team" then
-						textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-						if modTag then
-							modTag.Visible = true
-						end
-					else
-						textLabel.TextColor3 = getESPHealthColor(humanoid)
-						if modTag then
-							modTag.Visible = false
-						end
-					end
-				elseif billboard then
-					billboard.Enabled = false
-				end
+				updateESPLabel(model, textLabel)
 			end
 		end
 	end)
@@ -3191,7 +3221,7 @@ end, function(value)
 end)
 end
 
-if IS_SPLIT_HUB then
+if IS_MAIN_HUB then
 local temperatureCard = createCard(miscPage, "Temperature Nullifier", 94)
 createToggle(temperatureCard, 50, "Enable Temperature Nullifier", function()
 	return Config.TemperatureNullifierEnabled
@@ -3513,7 +3543,7 @@ local function applyConfigEffects()
 		task.spawn(disableFallDamageLoop)
 	end
 
-	if IS_SPLIT_HUB and Config.TemperatureNullifierEnabled then
+	if IS_MAIN_HUB and Config.TemperatureNullifierEnabled then
 		task.spawn(installTemperatureNullifier)
 	end
 
