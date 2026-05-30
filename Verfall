@@ -92,8 +92,6 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	DamageMultiplierEnabled = false,
 	DamageMultiplier = 9999,
 	NoRecoilEnabled = false,
-	MeleeHitMultiplierEnabled = false,
-	MeleeHitMultiplier = 3,
 	AimAssistEnabled = false,
 	AimAssistTeamCheck = false,
 	FOVEnabled = false,
@@ -147,7 +145,6 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"VelocityCapperEnabled",
 	"DamageMultiplierEnabled",
 	"NoRecoilEnabled",
-	"MeleeHitMultiplierEnabled",
 	"AimAssistEnabled",
 	"AimAssistTeamCheck",
 	"FOVEnabled",
@@ -468,8 +465,6 @@ Config.MovementSafeVersion = 2
 Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled == true
 Config.DamageMultiplier = Config.DamageMultiplier or 9999
 Config.NoRecoilEnabled = Config.NoRecoilEnabled == true
-Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled == true
-Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 3, 1, 5))
 Config.AimAssistEnabled = Config.AimAssistEnabled == true
 Config.AimAssistTeamCheck = Config.AimAssistTeamCheck == true
 Config.FOVEnabled = Config.FOVEnabled == true
@@ -1660,121 +1655,108 @@ if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
 
-if IS_MAIN_HUB then
-trackTransientConnection(RunService.Heartbeat:Connect(function()
+local velocityCapMoverConnections = {}
+local velocityCapCharacter = nil
+local velocityCapMovers = setmetatable({}, { __mode = "k" })
+
+local function getVelocityCap()
+	return tonumber(Config.CustomStats and Config.CustomStats.OdmVeloCap) or 300
+end
+
+local function clampHorizontalVelocity(vector, maxCap)
+	local horizontal = Vector3.new(vector.X, 0, vector.Z)
+	if horizontal.Magnitude <= maxCap or maxCap <= 0 then
+		return vector, false
+	end
+
+	local clamped = horizontal.Unit * maxCap
+	return Vector3.new(clamped.X, vector.Y, clamped.Z), true
+end
+
+local function trackVelocityMover(instance)
+	if not instance or velocityCapMovers[instance] then
+		return
+	end
+	if instance:IsA("BodyVelocity") or instance:IsA("LinearVelocity") then
+		velocityCapMovers[instance] = true
+	end
+end
+
+local function rebuildVelocityCapWatch(character)
+	for _, connection in ipairs(velocityCapMoverConnections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	velocityCapMoverConnections = {}
+	velocityCapMovers = setmetatable({}, { __mode = "k" })
+	velocityCapCharacter = character
+
+	if not character then
+		return
+	end
+
+	for _, descendant in ipairs(character:GetDescendants()) do
+		trackVelocityMover(descendant)
+	end
+	velocityCapMoverConnections[#velocityCapMoverConnections + 1] = trackTransientConnection(character.DescendantAdded:Connect(trackVelocityMover))
+end
+
+local function applyVelocityCap()
 	if not Config.VelocityCapperEnabled then
 		return
 	end
 
 	local character = localPlayer.Character
+	if character ~= velocityCapCharacter then
+		rebuildVelocityCapWatch(character)
+	end
 	if not character then
 		return
 	end
 
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-	if not rootPart then
-		return
-	end
-
-	local currentMaxCap = tonumber(Config.CustomStats and Config.CustomStats.OdmVeloCap) or 300
+	local currentMaxCap = getVelocityCap()
 	if currentMaxCap <= 0 then
 		return
 	end
 
-	local realVelocity = rootPart.AssemblyLinearVelocity
-	local horizontalVelocity = Vector3.new(realVelocity.X, 0, realVelocity.Z)
-	if horizontalVelocity.Magnitude > currentMaxCap then
-		local clampedReal = horizontalVelocity.Unit * currentMaxCap
-		rootPart.AssemblyLinearVelocity = Vector3.new(clampedReal.X, realVelocity.Y, clampedReal.Z)
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if rootPart then
+		local clamped, changed = clampHorizontalVelocity(rootPart.AssemblyLinearVelocity, currentMaxCap)
+		if changed then
+			rootPart.AssemblyLinearVelocity = clamped
+		end
 	end
 
-	for _, mover in ipairs(character:GetDescendants()) do
-		if mover:IsA("BodyVelocity") then
-			local targetVelocity = mover.Velocity
-			local horizontalTarget = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
-			if horizontalTarget.Magnitude > currentMaxCap then
-				local clampedVelocity = horizontalTarget.Unit * currentMaxCap
-				mover.Velocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
+	for mover in pairs(velocityCapMovers) do
+		if not mover.Parent then
+			velocityCapMovers[mover] = nil
+		elseif mover:IsA("BodyVelocity") then
+			local clamped, changed = clampHorizontalVelocity(mover.Velocity, currentMaxCap)
+			if changed then
+				mover.Velocity = clamped
 			end
 		elseif mover:IsA("LinearVelocity") then
-			local targetVelocity = mover.VectorVelocity
-			local horizontalTarget = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
-			if horizontalTarget.Magnitude > currentMaxCap then
-				local clampedVelocity = horizontalTarget.Unit * currentMaxCap
-				mover.VectorVelocity = Vector3.new(clampedVelocity.X, targetVelocity.Y, clampedVelocity.Z)
+			local clamped, changed = clampHorizontalVelocity(mover.VectorVelocity, currentMaxCap)
+			if changed then
+				mover.VectorVelocity = clamped
 			end
 		end
 	end
+end
+
+if IS_MAIN_HUB then
+trackTransientConnection(RunService.Heartbeat:Connect(function()
+	applyVelocityCap()
 end))
 end
 
 local setPlayerESPEnabled
 local startPlayerESP
-local MELEE_DAMAGE_KEYS = {
-	"Damage",
-	"BaseDamage",
-	"MeleeDamage",
-	"LightDamage",
-	"HeavyDamage",
-	"M1Damage",
-	"M2Damage",
-	"HitDamage",
-}
 
 if IS_MAIN_HUB then
 do
 task.spawn(function()
-	local hooked = false
-	local installed = pcall(function()
-		local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
-		if clientFramework then
-			local classes = clientFramework:WaitForChild("Classes", 5)
-			local combatClassFile = classes and classes:FindFirstChild("CombatClass")
-			if combatClassFile then
-				local success, combatClass = pcall(require, combatClassFile)
-				if success and combatClass and type(combatClass.OnHit) == "function" and combatClass.__CheddarMeleeHookVersion ~= 6 then
-					local originalOnHit = unwrapOriginalHitFunction(combatClass.__CheddarOriginalOnHit or combatClass.OnHit)
-					combatClass.__CheddarOriginalOnHit = originalOnHit
-					combatClass.OnHit = function(self, p32, p33, p34)
-						if not Config.MeleeHitMultiplierEnabled then
-							return originalOnHit(self, p32, p33, p34)
-						end
-
-						local multiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 1, 1, 5))
-						local originalValues = {}
-						local changedCount = 0
-
-						if multiplier > 1 then
-							for _, key in ipairs(MELEE_DAMAGE_KEYS) do
-								local value = rawget(self, key)
-								if type(value) == "number" then
-									originalValues[key] = value
-									changedCount += 1
-									self[key] = value * multiplier
-								end
-							end
-						end
-
-						if changedCount == 0 then
-							return originalOnHit(self, p32, p33, p34)
-						end
-
-						local result = originalOnHit(self, p32, p33, p34)
-						for key, value in pairs(originalValues) do
-							self[key] = value
-						end
-						return result
-					end
-					combatClass.__CheddarMeleeHookVersion = 6
-					hooked = true
-				end
-			end
-		end
-	end)
-	if installed and hooked then
-		Config.CombatHitMultiplierHooked = true
-	end
-
 	if not Config.GunFrameworkModified then
 		local installed = pcall(function()
 			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
@@ -2303,7 +2285,7 @@ local PlayerESPStarted = false
 local PLAYER_ESP_TEXT_SIZE = 14
 local PLAYER_ESP_REFRESH_RATE = 0.5
 
-setmetatable(activeBillboards, { __mode = "kv" })
+setmetatable(activeBillboards, { __mode = "k" })
 setmetatable(monitoredESPPlayers, { __mode = "k" })
 
 local function getESPFramework()
@@ -2581,15 +2563,19 @@ local function clearPlayerESP()
 		removePlayerESP(model)
 	end
 
-	for _, model in ipairs(CharactersFolder:GetChildren()) do
-		removePlayerESP(model)
+	for _, folder in ipairs(getCharacterFolders()) do
+		for _, model in ipairs(folder:GetChildren()) do
+			removePlayerESP(model)
+		end
 	end
 end
 
 local function scanPlayerESP()
 	scanESPFrameworkPlayers()
-	for _, model in ipairs(CharactersFolder:GetChildren()) do
-		task.spawn(setupModelESP, model)
+	for _, folder in ipairs(getCharacterFolders()) do
+		for _, model in ipairs(folder:GetChildren()) do
+			task.spawn(setupModelESP, model)
+		end
 	end
 end
 
@@ -2640,6 +2626,7 @@ startPlayerESP = function()
 
 	task.spawn(function()
 		local lastFrameworkScan = 0
+		local lastModelScan = 0
 		while _G.CheddarESPRunId == espRunId do
 			task.wait(math.max(tonumber(Config.PlayerESPUpdateRate) or PLAYER_ESP_REFRESH_RATE, 0.35))
 
@@ -2651,6 +2638,11 @@ startPlayerESP = function()
 
 			if not Config.PlayerESPEnabled then
 				continue
+			end
+
+			if now - lastModelScan > 1 then
+				lastModelScan = now
+				scanPlayerESP()
 			end
 
 			for model, textLabel in pairs(activeBillboards) do
@@ -3391,6 +3383,10 @@ createToggle(velocityCard, 50, "Enable Velocity Capper", function()
 	return Config.VelocityCapperEnabled
 end, function(value)
 	Config.VelocityCapperEnabled = value
+	if value then
+		rebuildVelocityCapWatch(localPlayer.Character)
+		applyVelocityCap()
+	end
 end)
 createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCap, function(text, box)
 	local value = tonumber(text)
@@ -3398,10 +3394,11 @@ createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCa
 		Config.CustomStats.OdmVeloCap = value
 	end
 	box.Text = tostring(Config.CustomStats.OdmVeloCap)
+	applyVelocityCap()
 end)
 
 do
-local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 246)
+local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 170)
 createToggle(weaponCard, 50, "Enable Dmg mult", function()
 	return Config.DamageMultiplierEnabled
 end, function(value)
@@ -3418,15 +3415,6 @@ createToggle(weaponCard, 126, "No Recoil", function()
 	return Config.NoRecoilEnabled
 end, function(value)
 	Config.NoRecoilEnabled = value
-end)
-createToggle(weaponCard, 164, "Melee DMG Mult", function()
-	return Config.MeleeHitMultiplierEnabled
-end, function(value)
-	Config.MeleeHitMultiplierEnabled = value
-end)
-createTextBox(weaponCard, 202, "Melee DMG Mult", Config.MeleeHitMultiplier, function(text, box)
-	Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(text) or Config.MeleeHitMultiplier, 1, 5))
-	box.Text = tostring(Config.MeleeHitMultiplier)
 end)
 
 local aimCard = createCard(pages.Firearms, "AimAssist", 284)
