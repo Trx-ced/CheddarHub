@@ -10,6 +10,14 @@ local HttpService = game:GetService("HttpService")
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
 
+local function isActiveRun()
+	return true
+end
+
+local function trackConnection(connection)
+	return connection
+end
+
 _G.UI_Config = _G.UI_Config or {
 	NapeEnabled = false,
 	NapeSize = Vector3.new(20, 20, 20),
@@ -72,7 +80,7 @@ _G.UI_Config = _G.UI_Config or {
 	PlayerESPDistanceEnabled = false,
 	PlayerESPMaxDistance = 2000,
 	PlayerESPOptimized = false,
-	PlayerESPUpdateRate = 0.25,
+	PlayerESPUpdateRate = 0.5,
 	RemoveTraitsEnabled = false,
 	InfHorseStamEnabled = false,
 	MusketBullseyeEnabled = false,
@@ -386,8 +394,8 @@ end
 applyDefaultDisabledConfig()
 LoadConfigSettings()
 
-if Config.AutoLoadConfig and LoadConfig(getNamedConfigFile(Config.SelectedConfigName)) then
-	SaveConfig()
+if Config.AutoLoadConfig then
+	LoadConfig(getNamedConfigFile(Config.SelectedConfigName))
 end
 
 if Config.CheddarPresetVersion ~= 5 then
@@ -403,6 +411,7 @@ Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
 Config.CustomStats = Config.CustomStats or {}
 Config.CustomStatsEnabled = Config.CustomStatsEnabled or {}
 Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
+Config.AttributesEnabled = Config.AttributesEnabled == true
 Config.ODMGAttributesEnabled = Config.ODMGAttributesEnabled == true
 Config.MovementSafeVersion = 2
 Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled == true
@@ -421,7 +430,7 @@ Config.PlayerESPKey = Config.PlayerESPKey or Enum.KeyCode.L
 Config.PlayerESPDistanceEnabled = Config.PlayerESPDistanceEnabled == true
 Config.PlayerESPMaxDistance = tonumber(Config.PlayerESPMaxDistance) or 2000
 Config.PlayerESPOptimized = Config.PlayerESPOptimized == true
-Config.PlayerESPUpdateRate = math.clamp(tonumber(Config.PlayerESPUpdateRate) or 0.25, 0.05, 2)
+Config.PlayerESPUpdateRate = math.clamp(tonumber(Config.PlayerESPUpdateRate) or 0.5, 0.35, 2)
 Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled == true
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
 Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled == true
@@ -456,6 +465,20 @@ local movementAttributes = {
 
 local function shouldApplyCustomStat(statName)
 	return Config.CustomStatsEnabled[statName] == true and (not movementAttributes[statName] or Config.ODMGAttributesEnabled)
+end
+
+local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
+
+local function applyCustomStats()
+	if not Config.AttributesEnabled or not clientInfo or not clientInfo.Parent then
+		return
+	end
+
+	for statName, statValue in pairs(Config.CustomStats) do
+		if statValue ~= nil and shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
+			clientInfo:SetAttribute(statName, statValue)
+		end
+	end
 end
 
 local function applyTitanExpansion(titanModel)
@@ -516,11 +539,17 @@ local function stripPhysics(part)
 	end
 end
 
+local monitoredNullifyFolders = setmetatable({}, { __mode = "k" })
+
 local function monitorFolder(folder)
+	if monitoredNullifyFolders[folder] then
+		return
+	end
+	monitoredNullifyFolders[folder] = true
 	for _, part in ipairs(folder:GetChildren()) do
 		stripPhysics(part)
 	end
-	folder.ChildAdded:Connect(stripPhysics)
+	trackConnection(folder.ChildAdded:Connect(stripPhysics))
 end
 
 local function optimizeTitanNullify(titanModel)
@@ -544,30 +573,22 @@ end
 local World = workspace:WaitForChild("World")
 local TitansFolder = World:WaitForChild("Titans")
 
-TitansFolder.ChildAdded:Connect(function(child)
+trackConnection(TitansFolder.ChildAdded:Connect(function(child)
 	if Config.NapeEnabled or Config.EyeEnabled then
 		applyTitanExpansion(child)
 	end
 	if Config.NullifyEnabled then
 		optimizeTitanNullify(child)
 	end
-end)
+end))
 
-local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
 if clientInfo then
 	task.spawn(function()
 		while task.wait(0.35) do
-			if Config.AttributesEnabled then
-				if not clientInfo.Parent then
-					break
-				end
-				for statName, enabled in pairs(Config.CustomStatsEnabled) do
-					local statValue = Config.CustomStats[statName]
-					if enabled == true and statValue ~= nil and shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
-						clientInfo:SetAttribute(statName, statValue)
-					end
-				end
+			if not clientInfo.Parent then
+				break
 			end
+			applyCustomStats()
 		end
 	end)
 
@@ -590,21 +611,21 @@ local function lockBandageCount(character)
 	if Config.BandageEnabled then
 		character:SetAttribute("BandageCount", 1)
 	end
-	character:GetAttributeChangedSignal("BandageCount"):Connect(function()
+	trackConnection(character:GetAttributeChangedSignal("BandageCount"):Connect(function()
 		if Config.BandageEnabled and character:GetAttribute("BandageCount") ~= 1 then
 			character:SetAttribute("BandageCount", 1)
 		end
-	end)
+	end))
 end
 
 if localPlayer.Character then
 	lockBandageCount(localPlayer.Character)
 end
 
-localPlayer.CharacterAdded:Connect(function(character)
+trackConnection(localPlayer.CharacterAdded:Connect(function(character)
 	task.wait(0.5)
 	lockBandageCount(character)
-end)
+end))
 
 if not Config.BandageTalentHooked then
 	task.spawn(function()
@@ -788,7 +809,7 @@ if not Config.HorseStaminaHooked then
 		local success, clientFramework = pcall(function()
 			return require(ReplicatedStorage:WaitForChild("ClientFramework", 5))
 		end)
-		RunService.Heartbeat:Connect(function()
+		trackConnection(RunService.Heartbeat:Connect(function()
 			if not Config.InfHorseStamEnabled then
 				return
 			end
@@ -809,7 +830,7 @@ if not Config.HorseStaminaHooked then
 				horse:SetAttribute("Exhausted", false)
 				horse:SetAttribute("RegenRate", 9999)
 			end
-		end)
+		end))
 	end)
 
 	Config.HorseStaminaHooked = tweenHooked
@@ -1074,12 +1095,12 @@ local function applyTitanDummy(dummy)
 	local label = ensureTitanDummyUI(nape)
 	updateTitanDummyLabel(dummy, label)
 	if not titanDummyConnections[dummy] then
-		titanDummyConnections[dummy] = dummy:GetAttributeChangedSignal("Hit"):Connect(function()
+		titanDummyConnections[dummy] = trackConnection(dummy:GetAttributeChangedSignal("Hit"):Connect(function()
 			local activeLabel = ensureTitanDummyUI(nape)
 			if dummy:GetAttribute("Hit") == true and activeLabel and Config.TitanDummyCountdownEnabled then
 				task.spawn(function()
 					for i = 15, 1, -1 do
-						if not activeLabel or not dummy.Parent or not Config.TitanDummyCountdownEnabled or not Config.TitanDummyStatusEnabled then
+						if not isActiveRun() or not activeLabel or not dummy.Parent or not Config.TitanDummyCountdownEnabled or not Config.TitanDummyStatusEnabled then
 							break
 						end
 						activeLabel.Text = "DEAD\n" .. i .. "s"
@@ -1094,13 +1115,13 @@ local function applyTitanDummy(dummy)
 			else
 				updateTitanDummyLabel(dummy, activeLabel)
 			end
-		end)
-		dummy.Destroying:Connect(function()
+		end))
+		trackConnection(dummy.Destroying:Connect(function()
 			if titanDummyConnections[dummy] then
 				titanDummyConnections[dummy]:Disconnect()
 				titanDummyConnections[dummy] = nil
 			end
-		end)
+		end))
 	end
 end
 
@@ -1112,10 +1133,10 @@ end
 
 task.spawn(function()
 	updateTitanDummies()
-	CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
+	trackConnection(CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
 		task.wait(0.5)
 		applyTitanDummy(dummy)
-	end)
+	end))
 	while task.wait(2) do
 		updateTitanDummies()
 	end
@@ -1489,7 +1510,7 @@ if Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
 
-RunService.Heartbeat:Connect(function()
+trackConnection(RunService.Heartbeat:Connect(function()
 	if not Config.VelocityCapperEnabled then
 		return
 	end
@@ -1533,7 +1554,7 @@ RunService.Heartbeat:Connect(function()
 			end
 		end
 	end
-end)
+end))
 
 local setPlayerESPEnabled
 local startPlayerESP
@@ -1677,7 +1698,7 @@ pcall(function()
 	end
 end)
 
-RunService.RenderStepped:Connect(function()
+trackConnection(RunService.RenderStepped:Connect(function()
 	if not fovCircle then
 		return
 	end
@@ -1689,7 +1710,7 @@ RunService.RenderStepped:Connect(function()
 	else
 		fovCircle.Visible = false
 	end
-end)
+end))
 
 local function getCharactersFolder()
 	local world = workspace:FindFirstChild("World")
@@ -1880,7 +1901,7 @@ local function isSameTeam(playerA, playerB, characterModelB)
 	return teamA and teamB and teamA == teamB
 end
 
-local teamCheckCache = {}
+local teamCheckCache = setmetatable({}, { __mode = "k" })
 local localTeamCache = {
 	Value = nil,
 	Updated = 0,
@@ -1932,10 +1953,7 @@ local function isSameTeamCached(targetPlayer, characterModel)
 		return cached.Value == teamA
 	end
 
-	local teamB = getFastCharacterTeam(targetPlayer, characterModel)
-	if not teamB and (not cached or now - cached.Updated > 6) then
-		teamB = getCharacterTeamFromLeaderboard(characterModel, targetPlayer) or getCharacterTeam(targetPlayer, characterModel)
-	end
+	local teamB = getFastCharacterTeam(targetPlayer, characterModel) or (cached and cached.Value)
 
 	teamCheckCache[cacheKey] = {
 		Value = teamB,
@@ -2016,11 +2034,11 @@ local function getCachedAimAssistTarget()
 	return cachedAimAssistPart, cachedAimAssistPosition
 end
 
-UserInputService.InputChanged:Connect(function(input)
+trackConnection(UserInputService.InputChanged:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseMovement then
 		requestAimAssistRefresh()
 	end
-end)
+end))
 
 local CharactersFolder = workspace:WaitForChild("World"):WaitForChild("Characters")
 local OLD_ESP_NAMES = {
@@ -2042,9 +2060,10 @@ local espClientFramework = nil
 local espGlobalTeams = {}
 local cachedPlayerData = {}
 local activeBillboards = {}
+local monitoredESPPlayers = {}
 local PlayerESPStarted = false
 local PLAYER_ESP_TEXT_SIZE = 14
-local PLAYER_ESP_REFRESH_RATE = 0.05
+local PLAYER_ESP_REFRESH_RATE = 0.5
 
 local function getESPFramework()
 	if espClientFramework ~= nil then
@@ -2103,16 +2122,20 @@ local function cacheESPData(playerObject)
 end
 
 local function monitorESPPlayer(playerObject)
+	if monitoredESPPlayers[playerObject] then
+		return
+	end
+	monitoredESPPlayers[playerObject] = true
 	cacheESPData(playerObject)
-	playerObject:GetAttributeChangedSignal("Team"):Connect(function()
+	trackConnection(playerObject:GetAttributeChangedSignal("Team"):Connect(function()
 		cacheESPData(playerObject)
-	end)
-	playerObject:GetAttributeChangedSignal("FirstName"):Connect(function()
+	end))
+	trackConnection(playerObject:GetAttributeChangedSignal("FirstName"):Connect(function()
 		cacheESPData(playerObject)
-	end)
-	playerObject:GetAttributeChangedSignal("LastName"):Connect(function()
+	end))
+	trackConnection(playerObject:GetAttributeChangedSignal("LastName"):Connect(function()
 		cacheESPData(playerObject)
-	end)
+	end))
 end
 
 local function scanESPFrameworkPlayers()
@@ -2181,7 +2204,13 @@ local function setupModelESP(model)
 		end
 	end
 
-	if root:FindFirstChild("StaffTrackerEspGui") then
+	local existingESP = root:FindFirstChild("StaffTrackerEspGui")
+	if existingESP then
+		local existingLabel = existingESP:FindFirstChild("EspText")
+		if existingLabel then
+			existingESP.Enabled = Config.PlayerESPEnabled
+			activeBillboards[model] = existingLabel
+		end
 		return
 	end
 
@@ -2240,6 +2269,9 @@ end
 
 setPlayerESPEnabled = function(enabled)
 	Config.PlayerESPEnabled = enabled
+	if not PlayerESPStarted and enabled then
+		task.spawn(startPlayerESP)
+	end
 	for model, label in pairs(activeBillboards) do
 		local billboard = label.Parent
 		if billboard then
@@ -2258,17 +2290,38 @@ startPlayerESP = function()
 		return
 	end
 
+	_G.CheddarESPRunId = (_G.CheddarESPRunId or 0) + 1
+	_G.CheddarESPConnections = _G.CheddarESPConnections or {}
+	for _, connection in ipairs(_G.CheddarESPConnections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	_G.CheddarESPConnections = {}
+	local function trackESPConnection(connection)
+		if connection then
+			_G.CheddarESPConnections[#_G.CheddarESPConnections + 1] = connection
+		end
+		return connection
+	end
+	local espRunId = _G.CheddarESPRunId
 	PlayerESPStarted = true
-	CharactersFolder.ChildAdded:Connect(setupModelESP)
-	CharactersFolder.ChildRemoved:Connect(function(child)
+	trackESPConnection(CharactersFolder.ChildAdded:Connect(setupModelESP))
+	trackESPConnection(CharactersFolder.ChildRemoved:Connect(function(child)
 		activeBillboards[child] = nil
-	end)
+	end))
 	scanPlayerESP()
 
 	task.spawn(function()
-		while true do
-			task.wait(PLAYER_ESP_REFRESH_RATE)
-			scanESPFrameworkPlayers()
+		local lastFrameworkScan = 0
+		while _G.CheddarESPRunId == espRunId do
+			task.wait(math.max(tonumber(Config.PlayerESPUpdateRate) or PLAYER_ESP_REFRESH_RATE, 0.35))
+
+			local now = os.clock()
+			if now - lastFrameworkScan > 3 then
+				lastFrameworkScan = now
+				scanESPFrameworkPlayers()
+			end
 
 			if not Config.PlayerESPEnabled then
 				continue
@@ -2286,7 +2339,9 @@ startPlayerESP = function()
 				local humanoid = model:FindFirstChildOfClass("Humanoid")
 				local billboard = textLabel.Parent
 
-				if root and humanoid and humanoid.Health > 0 and billboard then
+				if not model.Parent or not billboard then
+					activeBillboards[model] = nil
+				elseif root and humanoid and humanoid.Health > 0 then
 					local distance = math.round((root.Position - localPos).Magnitude)
 					if distance > Config.PlayerESPMaxDistance then
 						billboard.Enabled = false
@@ -2566,9 +2621,9 @@ local function createPage(name)
 		Padding = UDim.new(0, 14),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	})
-	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	trackConnection(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
-	end)
+	end))
 	pages[name] = page
 	return page
 end
@@ -2601,9 +2656,9 @@ local function createTab(name, index)
 		ZIndex = 4,
 	})
 	addCorner(tab, 10)
-	tab.MouseButton1Click:Connect(function()
+	trackConnection(tab.MouseButton1Click:Connect(function()
 		switchPage(name)
-	end)
+	end))
 	tabs[name] = tab
 end
 
@@ -2693,7 +2748,7 @@ local function createToggle(parent, y, text, getter, setter)
 			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
 		}):Play()
 	end
-	button.MouseButton1Click:Connect(function()
+	trackConnection(button.MouseButton1Click:Connect(function()
 		local ok, current = pcall(getter)
 		if not ok then
 			current = false
@@ -2705,7 +2760,7 @@ local function createToggle(parent, y, text, getter, setter)
 			SaveConfig()
 		end
 		refresh()
-	end)
+	end))
 	refresh()
 	table.insert(configRefreshers, refresh)
 	return refresh
@@ -2728,10 +2783,10 @@ local function createTextBox(parent, y, text, value, callback)
 	})
 	addCorner(box, 9)
 	addStroke(box, COLORS.STROKE_SOFT, 0.18)
-	box.FocusLost:Connect(function()
+	trackConnection(box.FocusLost:Connect(function()
 		callback(box.Text, box)
 		SaveConfig()
-	end)
+	end))
 	return box
 end
 
@@ -2753,14 +2808,15 @@ local function createStatToggleBox(parent, y, statName)
 	addCorner(box, 9)
 	addStroke(box, COLORS.STROKE_SOFT, 0.18)
 	statValueBoxes[statName] = box
-	box.FocusLost:Connect(function()
+	trackConnection(box.FocusLost:Connect(function()
 		local value = tonumber(box.Text)
 		if value then
 			Config.CustomStats[statName] = value
 		end
 		box.Text = tostring(Config.CustomStats[statName])
+		applyCustomStats()
 		SaveConfig()
-	end)
+	end))
 
 	local button = mk("TextButton", {
 		Parent = parent,
@@ -2786,11 +2842,12 @@ local function createStatToggleBox(parent, y, statName)
 		}):Play()
 	end
 
-	button.MouseButton1Click:Connect(function()
+	trackConnection(button.MouseButton1Click:Connect(function()
 		Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] ~= true
 		refresh()
+		applyCustomStats()
 		SaveConfig()
-	end)
+	end))
 
 	refresh()
 	table.insert(configRefreshers, refresh)
@@ -2823,12 +2880,12 @@ local function createKeybind(parent, y, text, getter, setter)
 			button.BackgroundColor3 = COLORS.INPUT
 		end
 	end
-	button.MouseButton1Click:Connect(function()
+	trackConnection(button.MouseButton1Click:Connect(function()
 		state.Capturing = button
 		state.CaptureSetter = setter
 		state.CaptureRefresh = refresh
 		refresh()
-	end)
+	end))
 	refresh()
 	table.insert(configRefreshers, refresh)
 	return refresh
@@ -2851,7 +2908,7 @@ local function createButton(parent, y, text, callback)
 	})
 	addCorner(button, 9)
 	addStroke(button, COLORS.STROKE, 0.18)
-	button.MouseButton1Click:Connect(callback)
+	trackConnection(button.MouseButton1Click:Connect(callback))
 	return button
 end
 
@@ -2926,6 +2983,9 @@ createToggle(attrCard, 50, "Enable Attribute Mods", function()
 	return Config.AttributesEnabled
 end, function(value)
 	Config.AttributesEnabled = value
+	if value then
+		applyCustomStats()
+	end
 end)
 
 local odmgAttrCard = createCard(attrPage, "ODMG Movement Attributes", 94)
@@ -2933,6 +2993,9 @@ createToggle(odmgAttrCard, 50, "Enable ODMG Movement Stats", function()
 	return Config.ODMGAttributesEnabled
 end, function(value)
 	Config.ODMGAttributesEnabled = value
+	if Config.AttributesEnabled then
+		applyCustomStats()
+	end
 end)
 
 local stats = {
@@ -2945,6 +3008,18 @@ local stats = {
 	"RunSpeed",
 	"VelocityScaling",
 }
+local anyCustomStatEnabled = false
+for _, statName in ipairs(stats) do
+	if Config.CustomStatsEnabled[statName] == true then
+		anyCustomStatEnabled = true
+		break
+	end
+end
+if Config.AttributesEnabled and not anyCustomStatEnabled then
+	for _, statName in ipairs(stats) do
+		Config.CustomStatsEnabled[statName] = true
+	end
+end
 local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #stats)
 for index, statName in ipairs(stats) do
 	Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
@@ -3272,6 +3347,8 @@ local function applyConfigEffects()
 		localPlayer.Character:SetAttribute("BandageCount", 1)
 	end
 
+	applyCustomStats()
+
 	if Config.NoFallDamageEnabled then
 		task.spawn(disableFallDamageLoop)
 	end
@@ -3364,34 +3441,34 @@ local function setWindowOpen(open)
 	main.Visible = open
 end
 
-closeButton.MouseButton1Click:Connect(function()
+trackConnection(closeButton.MouseButton1Click:Connect(function()
 	setWindowOpen(false)
-end)
+end))
 
-topBar.InputBegan:Connect(function(input)
+trackConnection(topBar.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
 		state.Dragging = true
 		state.DragStart = input.Position
 		state.StartPosition = main.Position
 		state.DragDelta = Vector3.zero
 		state.DragDirty = false
-		input.Changed:Connect(function()
+		trackConnection(input.Changed:Connect(function()
 			if input.UserInputState == Enum.UserInputState.End then
 				state.Dragging = false
 				state.DragDirty = false
 			end
-		end)
+		end))
 	end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
+trackConnection(UserInputService.InputChanged:Connect(function(input)
 	if state.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 		state.DragDelta = input.Position - state.DragStart
 		state.DragDirty = true
 	end
-end)
+end))
 
-RunService.RenderStepped:Connect(function()
+trackConnection(RunService.RenderStepped:Connect(function()
 	if state.Dragging and state.DragDirty and state.StartPosition then
 		local delta = state.DragDelta
 		main.Position = UDim2.new(
@@ -3402,9 +3479,9 @@ RunService.RenderStepped:Connect(function()
 		)
 		state.DragDirty = false
 	end
-end)
+end))
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
+trackConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if state.Capturing and input.UserInputType == Enum.UserInputType.Keyboard then
 		local setter = state.CaptureSetter
 		local refresh = state.CaptureRefresh
@@ -3443,7 +3520,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		refreshConfigControls()
 		SaveConfig()
 	end
-end)
+end))
 
 switchPage("Main")
 setWindowOpen(true)
