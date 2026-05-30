@@ -538,16 +538,32 @@ end
 normalizeVisibleCustomStatToggles()
 
 local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
+local customStatWriteLocks = {}
+
+local function enforceCustomStat(statName)
+	if customStatWriteLocks[statName] or not Config.AttributesEnabled or not clientInfo or not clientInfo.Parent then
+		return
+	end
+
+	local statValue = Config.CustomStats[statName]
+	if statValue == nil or not shouldApplyCustomStat(statName) then
+		return
+	end
+
+	if clientInfo:GetAttribute(statName) ~= statValue then
+		customStatWriteLocks[statName] = true
+		clientInfo:SetAttribute(statName, statValue)
+		customStatWriteLocks[statName] = nil
+	end
+end
 
 local function applyCustomStats()
 	if not Config.AttributesEnabled or not clientInfo or not clientInfo.Parent then
 		return
 	end
 
-	for statName, statValue in pairs(Config.CustomStats) do
-		if statValue ~= nil and shouldApplyCustomStat(statName) and clientInfo:GetAttribute(statName) ~= statValue then
-			clientInfo:SetAttribute(statName, statValue)
-		end
+	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
+		enforceCustomStat(statName)
 	end
 end
 
@@ -700,6 +716,12 @@ if IS_MAIN_HUB then
 end
 
 if IS_MAIN_HUB and clientInfo then
+	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
+		trackTransientConnection(clientInfo:GetAttributeChangedSignal(statName):Connect(function()
+			task.defer(enforceCustomStat, statName)
+		end))
+	end
+
 	task.spawn(function()
 		while isActiveRun() and task.wait(0.35) do
 			if not clientInfo.Parent then
@@ -1819,6 +1841,55 @@ end)
 end
 end
 
+task.spawn(function()
+	if not IS_MAIN_HUB then
+		return
+	end
+
+	local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+	if not clientFramework then
+		return
+	end
+
+	local classes = clientFramework:WaitForChild("Classes", 5)
+	local gunClassFile = classes and classes:FindFirstChild("GunClass")
+	if not gunClassFile then
+		return
+	end
+
+	local success, gunClass = pcall(require, gunClassFile)
+	if not success or type(gunClass) ~= "table" or gunClass.__CheddarReloadSpeedVersion == 1 then
+		return
+	end
+
+	local function applyReloadSpeedFields(self)
+		if not Config.AttributesEnabled or Config.CustomStatsEnabled.ReloadSpeed ~= true then
+			return
+		end
+
+		local value = tonumber(Config.CustomStats.ReloadSpeed)
+		if not value or value <= 0 then
+			return
+		end
+
+		if type(rawget(self, "ReloadSpeed")) == "number" then
+			self.ReloadSpeed = value
+		end
+	end
+
+	for _, methodName in ipairs({ "Reload", "StartReload", "ReloadWeapon" }) do
+		if type(gunClass[methodName]) == "function" then
+			local original = gunClass[methodName]
+			gunClass[methodName] = function(self, ...)
+				applyReloadSpeedFields(self)
+				return original(self, ...)
+			end
+		end
+	end
+
+	gunClass.__CheddarReloadSpeedVersion = 1
+end)
+
 local fovCircle
 if IS_MAIN_HUB then
 	if _G.CheddarHubFOVCircle then
@@ -2116,26 +2187,29 @@ local function getClosestPlayerToMouse()
 		return nil
 	end
 	local character = localPlayer.Character
-	local charactersFolder = getCharactersFolder()
 	local camera = workspace.CurrentCamera
-	if not character or not charactersFolder or not camera then
+	if not camera then
 		return nil
 	end
 	local mouseLocation = UserInputService:GetMouseLocation()
 	local closestPart
 	local shortestDistance = math.huge
-	for _, charModel in ipairs(charactersFolder:GetChildren()) do
-		if charModel:IsA("Model") and charModel ~= character then
-			local targetPlayer = Players:FindFirstChild(charModel.Name)
-			local humanoid = charModel:FindFirstChildOfClass("Humanoid")
-			local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
-			if not (Config.AimAssistTeamCheck and isSameTeamCached(targetPlayer, charModel)) and targetPart and humanoid and humanoid.Health > 0 then
-				local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
-				if onScreen then
-					local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
-					if distance < shortestDistance and (not Config.FOVEnabled or distance <= Config.FOVRadius) then
-						shortestDistance = distance
-						closestPart = targetPart
+	local seenModels = {}
+	for _, charactersFolder in ipairs(getCharacterFolders()) do
+		for _, charModel in ipairs(charactersFolder:GetChildren()) do
+			if charModel:IsA("Model") and not seenModels[charModel] and charModel ~= character and charModel.Name ~= localPlayer.Name then
+				seenModels[charModel] = true
+				local targetPlayer = Players:FindFirstChild(charModel.Name)
+				local humanoid = charModel:FindFirstChildOfClass("Humanoid")
+				local targetPart = charModel:FindFirstChild("Head") or charModel:FindFirstChild("HumanoidRootPart")
+				if not (Config.AimAssistTeamCheck and isSameTeamCached(targetPlayer, charModel)) and targetPart and humanoid and humanoid.Health > 0 then
+					local screenPosition, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+					if onScreen then
+						local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - mouseLocation).Magnitude
+						if distance < shortestDistance and (not Config.FOVEnabled or distance <= Config.FOVRadius) then
+							shortestDistance = distance
+							closestPart = targetPart
+						end
 					end
 				end
 			end
@@ -2148,25 +2222,33 @@ local cachedAimAssistPart = nil
 local cachedAimAssistPosition = nil
 local lastAimAssistScan = 0
 local aimAssistScanQueued = false
+local AIM_ASSIST_STATE_KEY = "CheddarAimAssistState_" .. HUB_PROFILE
+_G[AIM_ASSIST_STATE_KEY] = _G[AIM_ASSIST_STATE_KEY] or {}
+local AimAssistState = _G[AIM_ASSIST_STATE_KEY]
 
 local function refreshAimAssistTarget()
 	if not Config.AimAssistEnabled then
 		cachedAimAssistPart = nil
 		cachedAimAssistPosition = nil
+		AimAssistState.Part = nil
+		AimAssistState.Position = nil
 		return
 	end
 
 	cachedAimAssistPart = getClosestPlayerToMouse()
 	cachedAimAssistPosition = cachedAimAssistPart and cachedAimAssistPart.Position or nil
+	AimAssistState.Part = cachedAimAssistPart
+	AimAssistState.Position = cachedAimAssistPosition
+	AimAssistState.Updated = os.clock()
 end
 
-local function requestAimAssistRefresh()
+local function requestAimAssistRefresh(force)
 	if not Config.AimAssistEnabled or aimAssistScanQueued then
 		return
 	end
 
 	local now = os.clock()
-	if now - lastAimAssistScan < 0.12 then
+	if not force and now - lastAimAssistScan < 0.12 then
 		return
 	end
 
@@ -2179,12 +2261,18 @@ local function requestAimAssistRefresh()
 end
 
 local function getCachedAimAssistTarget()
-	return cachedAimAssistPart, cachedAimAssistPosition
+	return AimAssistState.Part or cachedAimAssistPart, AimAssistState.Position or cachedAimAssistPosition
 end
 
 if IS_MAIN_HUB then
 	trackTransientConnection(UserInputService.InputChanged:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			requestAimAssistRefresh()
+		end
+	end))
+
+	trackTransientConnection(RunService.RenderStepped:Connect(function()
+		if Config.AimAssistEnabled then
 			requestAimAssistRefresh()
 		end
 	end))
@@ -2572,7 +2660,7 @@ startPlayerESP = function()
 	end)
 end
 
-if IS_MAIN_HUB and not Config.AimAssistHookActive then
+if IS_MAIN_HUB and Config.AimAssistHookVersion ~= 2 then
 	local installed = pcall(function()
 		local mouse = localPlayer:GetMouse()
 		local oldIndex
@@ -2595,6 +2683,7 @@ if IS_MAIN_HUB and not Config.AimAssistHookActive then
 	end)
 	if installed then
 		Config.AimAssistHookActive = true
+		Config.AimAssistHookVersion = 2
 	end
 end
 
@@ -3009,7 +3098,7 @@ local function createStatToggleBox(parent, y, statName)
 			Config.CustomStats[statName] = value
 		end
 		box.Text = tostring(Config.CustomStats[statName])
-		applyCustomStats()
+		enforceCustomStat(statName)
 		SaveConfig()
 	end))
 
@@ -3040,7 +3129,7 @@ local function createStatToggleBox(parent, y, statName)
 	trackConnection(button.MouseButton1Click:Connect(function()
 		Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] ~= true
 		refresh()
-		applyCustomStats()
+		enforceCustomStat(statName)
 		SaveConfig()
 	end))
 
@@ -3346,16 +3435,19 @@ createToggle(aimCard, 50, "Enable AimAssist", function()
 end, function(value)
 	Config.AimAssistEnabled = value
 	if value then
-		requestAimAssistRefresh()
+		requestAimAssistRefresh(true)
 	else
 		cachedAimAssistPart = nil
 		cachedAimAssistPosition = nil
+		AimAssistState.Part = nil
+		AimAssistState.Position = nil
 	end
 end)
 createToggle(aimCard, 88, "Enable FOV Size", function()
 	return Config.FOVEnabled
 end, function(value)
 	Config.FOVEnabled = value
+	requestAimAssistRefresh(true)
 end)
 createTextBox(aimCard, 126, "FOV Size", Config.FOVRadius, function(text, box)
 	local value = tonumber(text)
@@ -3363,6 +3455,7 @@ createTextBox(aimCard, 126, "FOV Size", Config.FOVRadius, function(text, box)
 		Config.FOVRadius = value
 	end
 	box.Text = tostring(Config.FOVRadius)
+	requestAimAssistRefresh(true)
 end)
 createTextBox(aimCard, 164, "FOV Transparency", Config.FOVTransparency, function(text, box)
 	Config.FOVTransparency = math.clamp(tonumber(text) or Config.FOVTransparency, 0, 1)
@@ -3377,6 +3470,8 @@ createToggle(aimCard, 240, "Team Check", function()
 	return Config.AimAssistTeamCheck
 end, function(value)
 	Config.AimAssistTeamCheck = value
+	teamCheckCache = setmetatable({}, { __mode = "k" })
+	requestAimAssistRefresh(true)
 end)
 end
 
