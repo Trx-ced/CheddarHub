@@ -433,9 +433,35 @@ Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.TemperatureNullifierEnabled = Config.TemperatureNullifierEnabled == true
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 Config.BandageRemovalEnabled = Config.BandageRemovalEnabled or false
+local DEFAULT_CUSTOM_STATS = {
+	FirearmRange = 500,
+	GasConservation = 0.5,
+	OdmHookVeloGain = 2,
+	OdmPassiveVeloGain = 2,
+	OdmVeloCap = 300,
+	ReloadSpeed = 1.5,
+	RunSpeed = 1,
+	VelocityScaling = 1,
+}
+
+local VISIBLE_ATTRIBUTE_STATS = {
+	"FirearmRange",
+	"GasConservation",
+	"OdmHookVeloGain",
+	"OdmPassiveVeloGain",
+	"OdmVeloCap",
+	"ReloadSpeed",
+	"RunSpeed",
+	"VelocityScaling",
+}
+
 Config.CustomStats = Config.CustomStats or {}
 Config.CustomStatsEnabled = Config.CustomStatsEnabled or {}
-Config.CustomStats.RunSpeed = Config.CustomStats.RunSpeed or 1
+for statName, defaultValue in pairs(DEFAULT_CUSTOM_STATS) do
+	if Config.CustomStats[statName] == nil then
+		Config.CustomStats[statName] = defaultValue
+	end
+end
 Config.AttributesEnabled = Config.AttributesEnabled == true
 Config.ODMGAttributesEnabled = Config.ODMGAttributesEnabled == true
 Config.MovementSafeVersion = 2
@@ -491,6 +517,25 @@ local movementAttributes = {
 local function shouldApplyCustomStat(statName)
 	return Config.CustomStatsEnabled[statName] == true and (not movementAttributes[statName] or Config.ODMGAttributesEnabled)
 end
+
+local function enableVisibleCustomStats()
+	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
+		Config.CustomStatsEnabled[statName] = true
+	end
+end
+
+local function normalizeVisibleCustomStatToggles()
+	if not Config.AttributesEnabled then
+		return
+	end
+	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
+		if Config.CustomStatsEnabled[statName] == nil then
+			Config.CustomStatsEnabled[statName] = true
+		end
+	end
+end
+
+normalizeVisibleCustomStatToggles()
 
 local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
 
@@ -3162,6 +3207,8 @@ createToggle(attrCard, 50, "Enable Attribute Mods", function()
 end, function(value)
 	Config.AttributesEnabled = value
 	if value then
+		enableVisibleCustomStats()
+		refreshConfigControls()
 		applyCustomStats()
 	end
 end)
@@ -3176,30 +3223,18 @@ end, function(value)
 	end
 end)
 
-local stats = {
-	"FirearmRange",
-	"GasConservation",
-	"OdmHookVeloGain",
-	"OdmPassiveVeloGain",
-	"OdmVeloCap",
-	"ReloadSpeed",
-	"RunSpeed",
-	"VelocityScaling",
-}
 local anyCustomStatEnabled = false
-for _, statName in ipairs(stats) do
+for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
 	if Config.CustomStatsEnabled[statName] == true then
 		anyCustomStatEnabled = true
 		break
 	end
 end
 if Config.AttributesEnabled and not anyCustomStatEnabled then
-	for _, statName in ipairs(stats) do
-		Config.CustomStatsEnabled[statName] = true
-	end
+	enableVisibleCustomStats()
 end
-local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #stats)
-for index, statName in ipairs(stats) do
+local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #VISIBLE_ATTRIBUTE_STATS)
+for index, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
 	Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
 	createStatToggleBox(statCard, 42 + index * 36, statName)
 end
@@ -3537,6 +3572,7 @@ local function applyConfigEffects()
 	end
 
 	if IS_MAIN_HUB then
+		normalizeVisibleCustomStatToggles()
 		applyCustomStats()
 	end
 
