@@ -1057,7 +1057,7 @@ local function updateMusketBullseyes()
 	end
 end
 
-if IS_SPLIT_HUB then
+if IS_MAIN_HUB or IS_SPLIT_HUB then
 	task.spawn(function()
 		updateMusketBullseyes()
 		while task.wait(2) do
@@ -1212,7 +1212,7 @@ local function updateTitanDummies()
 	end
 end
 
-if IS_SPLIT_HUB then
+if IS_MAIN_HUB or IS_SPLIT_HUB then
 	task.spawn(function()
 		updateTitanDummies()
 		trackConnection(CollectionService:GetInstanceAddedSignal("Titan Dummy"):Connect(function(dummy)
@@ -3075,7 +3075,7 @@ if IS_MAIN_HUB then
 end
 local visualPage = IS_MAIN_HUB and createPage("Visual") or nil
 local otherPage = createPage("Other")
-local practicalPage = IS_SPLIT_HUB and createPage("Practical") or nil
+local practicalPage = createPage("Practical")
 local overpoweredPage = IS_MAIN_HUB and createPage("Overpowered") or nil
 local settingsPage = createPage("Settings")
 
@@ -3086,8 +3086,9 @@ if IS_MAIN_HUB then
 	createTab("Firearms", 4)
 	createTab("Visual", 5)
 	createTab("Other", 6)
-	createTab("Overpowered", 7)
-	createTab("Settings", 8)
+	createTab("Practical", 7)
+	createTab("Overpowered", 8)
+	createTab("Settings", 9)
 else
 	createTab("Misc", 1)
 	createTab("Other", 2)
@@ -3382,7 +3383,7 @@ end, function(value)
 end)
 end
 
-if IS_SPLIT_HUB then
+if IS_MAIN_HUB or IS_SPLIT_HUB then
 local obbyCard = createCard(practicalPage, "Obby", 94)
 createButton(obbyCard, 50, "Run Obby", runObbyOnce)
 
@@ -3547,11 +3548,11 @@ local function applyConfigEffects()
 		task.spawn(installTemperatureNullifier)
 	end
 
-	if IS_SPLIT_HUB and Config.MusketBullseyeEnabled then
+	if (IS_MAIN_HUB or IS_SPLIT_HUB) and Config.MusketBullseyeEnabled then
 		updateMusketBullseyes()
 	end
 
-	if IS_SPLIT_HUB and (Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled) then
+	if (IS_MAIN_HUB or IS_SPLIT_HUB) and (Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled) then
 		updateTitanDummies()
 	end
 
