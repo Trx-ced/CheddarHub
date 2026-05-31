@@ -996,7 +996,7 @@ local function runObbyOnce()
 			return a.Name < b.Name
 		end)
 		local totalNodes = #checkpoints + 1
-		local calculatedDelay = 28 / math.max(totalNodes, 1)
+		local calculatedDelay = 20 / math.max(totalNodes, 1)
 		local character = localPlayer.Character
 		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 		if not rootPart then
