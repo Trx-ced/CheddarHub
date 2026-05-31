@@ -108,6 +108,7 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	InfHorseStamEnabled = false,
 	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(25, 25, 25),
+	ObbyTestTime = 28,
 	SpeedTestTime = 16.5,
 	TitanDummyHitboxEnabled = false,
 	TitanDummyHitboxSize = Vector3.new(18, 18, 18),
@@ -481,6 +482,7 @@ Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled == true
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
 Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled == true
 Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(25, 25, 25)
+Config.ObbyTestTime = tonumber(Config.ObbyTestTime) or 28
 Config.SpeedTestTime = tonumber(Config.SpeedTestTime) or 16.5
 Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled == true
 Config.TitanDummyHitboxSize = Config.TitanDummyHitboxSize or Vector3.new(18, 18, 18)
@@ -996,7 +998,7 @@ local function runObbyOnce()
 			return a.Name < b.Name
 		end)
 		local totalNodes = #checkpoints + 1
-		local calculatedDelay = 16 / math.max(totalNodes, 1)
+		local calculatedDelay = math.max(tonumber(Config.ObbyTestTime) or 28, 1) / math.max(totalNodes, 1)
 		local character = localPlayer.Character
 		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 		if not rootPart then
@@ -3502,8 +3504,12 @@ end)
 end
 
 if IS_MAIN_HUB or IS_SPLIT_HUB then
-local obbyCard = createCard(practicalPage, "Obby", 94)
-createButton(obbyCard, 50, "Run Obby", runObbyOnce)
+local obbyCard = createCard(practicalPage, "Obby", 132)
+createTextBox(obbyCard, 50, "Total Time", Config.ObbyTestTime, function(text, box)
+	Config.ObbyTestTime = math.max(tonumber(text) or Config.ObbyTestTime, 1)
+	box.Text = tostring(Config.ObbyTestTime)
+end)
+createButton(obbyCard, 88, "Run Obby", runObbyOnce)
 
 local speedCard = createCard(practicalPage, "Speed Test", 132)
 createTextBox(speedCard, 50, "Total Time", Config.SpeedTestTime, function(text, box)
