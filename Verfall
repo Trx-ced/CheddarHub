@@ -107,7 +107,7 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	RemoveTraitsEnabled = false,
 	InfHorseStamEnabled = false,
 	MusketBullseyeEnabled = false,
-	MusketBullseyeSize = Vector3.new(25, 25, 25),
+	MusketBullseyeSize = Vector3.new(100, 100, 100),
 	ObbyTestTime = 28,
 	SpeedTestTime = 16.5,
 	TitanDummyHitboxEnabled = false,
@@ -481,7 +481,7 @@ Config.PlayerESPUpdateRate = math.clamp(tonumber(Config.PlayerESPUpdateRate) or 
 Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled == true
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
 Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled == true
-Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(25, 25, 25)
+Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(100, 100, 100)
 Config.ObbyTestTime = tonumber(Config.ObbyTestTime) or 28
 Config.SpeedTestTime = tonumber(Config.SpeedTestTime) or 16.5
 Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled == true
@@ -1075,46 +1075,31 @@ end
 local musketBullseyeOriginals = {}
 
 local function updateMusketBullseyes()
-	local targetTags = {
-		"BullsEye Horizontal",
-		"BullsEye Vertical",
-		"BullsEye PopUp",
-	}
-	for _, tagName in ipairs(targetTags) do
-		for _, target in ipairs(CollectionService:GetTagged(tagName)) do
-			local bullsEye = target:FindFirstChild("BullsEye")
-			if bullsEye and bullsEye:IsA("BasePart") then
-				if not musketBullseyeOriginals[bullsEye] then
-					musketBullseyeOriginals[bullsEye] = {
-						Size = bullsEye.Size,
-						CanCollide = bullsEye.CanCollide,
-						Transparency = bullsEye.Transparency,
-					}
-				end
-				local highlight = bullsEye:FindFirstChild("MusketBullseyeHighlight")
-				if Config.MusketBullseyeEnabled then
-					if not highlight then
-						highlight = Instance.new("Highlight")
-						highlight.Name = "MusketBullseyeHighlight"
-						highlight.Adornee = bullsEye
-						highlight.FillColor = Color3.fromRGB(255, 0, 0)
-						highlight.FillTransparency = 0.4
-						highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-						highlight.Parent = bullsEye
-					end
-					bullsEye.Size = Config.MusketBullseyeSize
-					bullsEye.CanCollide = false
-					bullsEye.Transparency = 0.7
-				else
-					local original = musketBullseyeOriginals[bullsEye]
-					if original then
-						bullsEye.Size = original.Size
-						bullsEye.CanCollide = original.CanCollide
-						bullsEye.Transparency = original.Transparency
-					end
-					if highlight then
-						highlight:Destroy()
-					end
+	local targetContainer = workspace:FindFirstChild("MusketTestTargets")
+	if not targetContainer then
+		return
+	end
+
+	for _, object in ipairs(targetContainer:GetChildren()) do
+		local targetPart = object:FindFirstChild("Bar") or (object.Name == "Bar" and object)
+		if targetPart and targetPart:IsA("BasePart") then
+			if not musketBullseyeOriginals[targetPart] then
+				musketBullseyeOriginals[targetPart] = {
+					Size = targetPart.Size,
+					CanCollide = targetPart.CanCollide,
+					Transparency = targetPart.Transparency,
+				}
+			end
+			if Config.MusketBullseyeEnabled then
+				targetPart.Size = Config.MusketBullseyeSize
+				targetPart.CanCollide = false
+				targetPart.Transparency = 0.5
+			else
+				local original = musketBullseyeOriginals[targetPart]
+				if original then
+					targetPart.Size = original.Size
+					targetPart.CanCollide = original.CanCollide
+					targetPart.Transparency = original.Transparency
 				end
 			end
 		end
@@ -3518,14 +3503,14 @@ createTextBox(speedCard, 50, "Total Time", Config.SpeedTestTime, function(text, 
 end)
 createButton(speedCard, 88, "Run Speed Test", runSpeedTestOnce)
 
-local musketCard = createCard(practicalPage, "Musket Test Bullseye Expand", 132)
-createToggle(musketCard, 50, "Musket Test Bullseye Expand", function()
+local musketCard = createCard(practicalPage, "Musket Test Bar Expand", 132)
+createToggle(musketCard, 50, "Musket Test Bar Expand", function()
 	return Config.MusketBullseyeEnabled
 end, function(value)
 	Config.MusketBullseyeEnabled = value
 	updateMusketBullseyes()
 end)
-createTextBox(musketCard, 88, "XYZ Expansion", "25,25,25", function(text, box)
+createTextBox(musketCard, 88, "XYZ Expansion", "100,100,100", function(text, box)
 	Config.MusketBullseyeSize = parseVector(text, Config.MusketBullseyeSize)
 	box.Text = string.format("%s,%s,%s", Config.MusketBullseyeSize.X, Config.MusketBullseyeSize.Y, Config.MusketBullseyeSize.Z)
 	if Config.MusketBullseyeEnabled then
