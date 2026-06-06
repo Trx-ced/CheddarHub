@@ -78,6 +78,7 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 		OdmVeloCap = false,
 		ReloadSpeed = false,
 		RunSpeed = false,
+		StrengthMultiplier = false,
 		VelocityScaling = false,
 	},
 	BandageEnabled = false,
@@ -92,6 +93,8 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	DamageMultiplierEnabled = false,
 	DamageMultiplier = 9999,
 	NoRecoilEnabled = false,
+	MeleeHitMultiplierEnabled = false,
+	MeleeHitMultiplier = 3,
 	AimAssistEnabled = false,
 	AimAssistTeamCheck = false,
 	FOVEnabled = false,
@@ -108,6 +111,7 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	InfHorseStamEnabled = false,
 	MusketBullseyeEnabled = false,
 	MusketBullseyeSize = Vector3.new(100, 100, 100),
+	MusketBullseyeTransparency = 0.5,
 	ObbyTestTime = 28,
 	SpeedTestTime = 16.5,
 	TitanDummyHitboxEnabled = false,
@@ -146,6 +150,7 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"VelocityCapperEnabled",
 	"DamageMultiplierEnabled",
 	"NoRecoilEnabled",
+	"MeleeHitMultiplierEnabled",
 	"AimAssistEnabled",
 	"AimAssistTeamCheck",
 	"FOVEnabled",
@@ -439,6 +444,7 @@ local DEFAULT_CUSTOM_STATS = {
 	OdmVeloCap = 300,
 	ReloadSpeed = 1.5,
 	RunSpeed = 1,
+	StrengthMultiplier = 2,
 	VelocityScaling = 1,
 }
 
@@ -450,6 +456,7 @@ local VISIBLE_ATTRIBUTE_STATS = {
 	"OdmVeloCap",
 	"ReloadSpeed",
 	"RunSpeed",
+	"StrengthMultiplier",
 	"VelocityScaling",
 }
 
@@ -466,6 +473,8 @@ Config.MovementSafeVersion = 2
 Config.DamageMultiplierEnabled = Config.DamageMultiplierEnabled == true
 Config.DamageMultiplier = Config.DamageMultiplier or 9999
 Config.NoRecoilEnabled = Config.NoRecoilEnabled == true
+Config.MeleeHitMultiplierEnabled = Config.MeleeHitMultiplierEnabled == true
+Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 3, 1, 5))
 Config.AimAssistEnabled = Config.AimAssistEnabled == true
 Config.AimAssistTeamCheck = Config.AimAssistTeamCheck == true
 Config.FOVEnabled = Config.FOVEnabled == true
@@ -482,6 +491,7 @@ Config.RemoveTraitsEnabled = Config.RemoveTraitsEnabled == true
 Config.InfHorseStamEnabled = Config.InfHorseStamEnabled == true
 Config.MusketBullseyeEnabled = Config.MusketBullseyeEnabled == true
 Config.MusketBullseyeSize = Config.MusketBullseyeSize or Vector3.new(100, 100, 100)
+Config.MusketBullseyeTransparency = math.clamp(tonumber(Config.MusketBullseyeTransparency) or 0.5, 0, 1)
 Config.ObbyTestTime = tonumber(Config.ObbyTestTime) or 28
 Config.SpeedTestTime = tonumber(Config.SpeedTestTime) or 16.5
 Config.TitanDummyHitboxEnabled = Config.TitanDummyHitboxEnabled == true
@@ -562,6 +572,15 @@ local function applyCustomStats()
 	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
 		enforceCustomStat(statName)
 	end
+end
+
+local function ensureMeleeStrengthMultiplier()
+	if not Config.MeleeHitMultiplierEnabled then
+		return
+	end
+
+	Config.CustomStatsEnabled.StrengthMultiplier = true
+	enforceCustomStat("StrengthMultiplier")
 end
 
 local titanHitboxState = setmetatable({}, { __mode = "k" })
@@ -1088,18 +1107,63 @@ local function updateMusketBullseyes()
 					Size = targetPart.Size,
 					CanCollide = targetPart.CanCollide,
 					Transparency = targetPart.Transparency,
+					Attachments = {},
 				}
+				for _, descendant in ipairs(targetPart:GetDescendants()) do
+					if descendant:IsA("Attachment") then
+						musketBullseyeOriginals[targetPart].Attachments[descendant] = descendant.Position
+					end
+				end
 			end
 			if Config.MusketBullseyeEnabled then
+				local original = musketBullseyeOriginals[targetPart]
+				local oldSize = original and original.Size or targetPart.Size
+				local scale = Vector3.new(
+					oldSize.X ~= 0 and Config.MusketBullseyeSize.X / oldSize.X or 1,
+					oldSize.Y ~= 0 and Config.MusketBullseyeSize.Y / oldSize.Y or 1,
+					oldSize.Z ~= 0 and Config.MusketBullseyeSize.Z / oldSize.Z or 1
+				)
 				targetPart.Size = Config.MusketBullseyeSize
 				targetPart.CanCollide = false
-				targetPart.Transparency = 0.5
+				targetPart.Transparency = Config.MusketBullseyeTransparency
+				local highlight = targetPart:FindFirstChild("MusketBarHitboxHighlight")
+				if not highlight then
+					highlight = Instance.new("Highlight")
+					highlight.Name = "MusketBarHitboxHighlight"
+					highlight.Adornee = targetPart
+					highlight.FillColor = Color3.fromRGB(255, 0, 0)
+					highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+					highlight.FillTransparency = 0.65
+					highlight.OutlineTransparency = 0
+					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					highlight.Parent = targetPart
+				end
+				if original then
+					for attachment, originalPosition in pairs(original.Attachments) do
+						if attachment and attachment.Parent then
+							attachment.Position = Vector3.new(
+								originalPosition.X * scale.X,
+								originalPosition.Y * scale.Y,
+								originalPosition.Z * scale.Z
+							)
+						end
+					end
+				end
 			else
 				local original = musketBullseyeOriginals[targetPart]
 				if original then
 					targetPart.Size = original.Size
 					targetPart.CanCollide = original.CanCollide
 					targetPart.Transparency = original.Transparency
+					for attachment, originalPosition in pairs(original.Attachments) do
+						if attachment and attachment.Parent then
+							attachment.Position = originalPosition
+						end
+					end
+				end
+				local highlight = targetPart:FindFirstChild("MusketBarHitboxHighlight")
+				if highlight then
+					highlight:Destroy()
 				end
 			end
 		end
@@ -1280,17 +1344,23 @@ local function instantRefillAll()
 			task.wait()
 		end
 		if type(obj) == "table" then
-			if obj.MaxGas and rawget(obj, "Gas") then
-				obj.Gas = obj.MaxGas
-				if type(obj.UpdateGas) == "function" then
-					obj:UpdateGas()
+			local maxGas = rawget(obj, "MaxGas")
+			local gas = rawget(obj, "Gas")
+			if maxGas ~= nil and gas ~= nil then
+				obj.Gas = maxGas
+				local updateGas = rawget(obj, "UpdateGas")
+				if type(updateGas) == "function" then
+					pcall(updateGas, obj)
 				end
 			end
-			if obj.MaxDurability and rawget(obj, "Blades") then
-				obj.Blades = obj.MaxBlades or 5
-				obj.Durability = obj.MaxDurability
-				if type(obj.UpdateDurability) == "function" then
-					obj:UpdateDurability()
+			local maxDurability = rawget(obj, "MaxDurability")
+			local blades = rawget(obj, "Blades")
+			if maxDurability ~= nil and blades ~= nil then
+				obj.Blades = rawget(obj, "MaxBlades") or 5
+				obj.Durability = maxDurability
+				local updateDurability = rawget(obj, "UpdateDurability")
+				if type(updateDurability) == "function" then
+					pcall(updateDurability, obj)
 				end
 			end
 		end
@@ -1744,6 +1814,46 @@ local startPlayerESP
 if IS_MAIN_HUB then
 do
 task.spawn(function()
+	Config.CombatHitMultiplierHooked = false
+	if not Config.CombatHitMultiplierHooked then
+		local hooked = false
+		local installed = pcall(function()
+			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
+			if clientFramework then
+				local classes = clientFramework:WaitForChild("Classes", 5)
+				local combatClassFile = classes and classes:FindFirstChild("CombatClass")
+				if combatClassFile then
+					local success, combatClass = pcall(require, combatClassFile)
+					if success and combatClass and type(combatClass.OnHit) == "function" then
+						combatClass.__CheddarOriginalOnHit = combatClass.__CheddarOriginalOnHit or combatClass.OnHit
+						combatClass.OnHit = function(self, ...)
+							if not Config.MeleeHitMultiplierEnabled then
+								return combatClass.__CheddarOriginalOnHit(self, ...)
+							end
+
+							local hitCount = math.floor(math.clamp(tonumber(Config.MeleeHitMultiplier) or 1, 1, 5))
+							local result
+							for i = 1, hitCount do
+								local packed = table.pack(pcall(combatClass.__CheddarOriginalOnHit, self, ...))
+								if not packed[1] then
+									error(packed[2])
+								end
+								if i == 1 then
+									result = packed
+								end
+							end
+							return unpack(result, 2, result.n)
+						end
+						hooked = true
+					end
+				end
+			end
+		end)
+		if installed and hooked then
+			Config.CombatHitMultiplierHooked = true
+		end
+	end
+
 	if not Config.GunFrameworkModified then
 		local installed = pcall(function()
 			local clientFramework = ReplicatedStorage:FindFirstChild("ClientFramework")
@@ -3385,7 +3495,7 @@ createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCa
 end)
 
 do
-local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 170)
+local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 246)
 createToggle(weaponCard, 50, "Enable Dmg mult", function()
 	return Config.DamageMultiplierEnabled
 end, function(value)
@@ -3402,6 +3512,19 @@ createToggle(weaponCard, 126, "No Recoil", function()
 	return Config.NoRecoilEnabled
 end, function(value)
 	Config.NoRecoilEnabled = value
+end)
+createToggle(weaponCard, 164, "Melee DMG Mult", function()
+	return Config.MeleeHitMultiplierEnabled
+end, function(value)
+	Config.MeleeHitMultiplierEnabled = value
+	if value then
+		ensureMeleeStrengthMultiplier()
+	end
+end)
+createTextBox(weaponCard, 202, "Melee DMG Mult", Config.MeleeHitMultiplier, function(text, box)
+	Config.MeleeHitMultiplier = math.floor(math.clamp(tonumber(text) or Config.MeleeHitMultiplier, 1, 5))
+	box.Text = tostring(Config.MeleeHitMultiplier)
+	ensureMeleeStrengthMultiplier()
 end)
 
 local aimCard = createCard(pages.Firearms, "AimAssist", 284)
@@ -3503,7 +3626,7 @@ createTextBox(speedCard, 50, "Total Time", Config.SpeedTestTime, function(text, 
 end)
 createButton(speedCard, 88, "Run Speed Test", runSpeedTestOnce)
 
-local musketCard = createCard(practicalPage, "Musket Test Bar Expand", 132)
+local musketCard = createCard(practicalPage, "Musket Test Bar Expand", 170)
 createToggle(musketCard, 50, "Musket Test Bar Expand", function()
 	return Config.MusketBullseyeEnabled
 end, function(value)
@@ -3513,6 +3636,13 @@ end)
 createTextBox(musketCard, 88, "XYZ Expansion", "100,100,100", function(text, box)
 	Config.MusketBullseyeSize = parseVector(text, Config.MusketBullseyeSize)
 	box.Text = string.format("%s,%s,%s", Config.MusketBullseyeSize.X, Config.MusketBullseyeSize.Y, Config.MusketBullseyeSize.Z)
+	if Config.MusketBullseyeEnabled then
+		updateMusketBullseyes()
+	end
+end)
+createTextBox(musketCard, 126, "Transparency", Config.MusketBullseyeTransparency, function(text, box)
+	Config.MusketBullseyeTransparency = math.clamp(tonumber(text) or Config.MusketBullseyeTransparency, 0, 1)
+	box.Text = tostring(Config.MusketBullseyeTransparency)
 	if Config.MusketBullseyeEnabled then
 		updateMusketBullseyes()
 	end
@@ -3648,6 +3778,7 @@ local function applyConfigEffects()
 	if IS_MAIN_HUB then
 		normalizeVisibleCustomStatToggles()
 		applyCustomStats()
+		ensureMeleeStrengthMultiplier()
 	end
 
 	if IS_MAIN_HUB and Config.NoFallDamageEnabled then
