@@ -15,7 +15,7 @@ local SETTINGS = {
 
 	Expander = {
 		Enabled = false,
-		Size = 100,
+		Size = Vector3.new(20, 15, 25),
 	},
 
 	Gear = {
@@ -26,6 +26,7 @@ local SETTINGS = {
 		StartVelocityEnabled = true,
 		VelocityGainEnabled = true,
 		VeloCap = 180,
+		VeloCapRampRate = 18,
 		TurnSpeedMultiplier = 3,
 		DexDrainDivisor = 0.6,
 		StartVelocityMultiplier = 1.85,
@@ -93,6 +94,7 @@ local gearVelocityConnection
 local gearRuntimeConnection
 local espCharacterAddedConnection
 local lastExpanderScan = 0
+local gearRuntimeSpeed = 0
 local originalGearValues = {}
 local expanderParts = {}
 local refillDurabilityBox
@@ -143,6 +145,27 @@ local function numberOr(defaultValue, text)
 		return defaultValue
 	end
 	return n
+end
+
+local function vectorToText(vector)
+	return tostring(vector.X) .. "," .. tostring(vector.Y) .. "," .. tostring(vector.Z)
+end
+
+local function vectorOr(defaultValue, text)
+	local parts = {}
+	for value in tostring(text):gmatch("[^,%s]+") do
+		table.insert(parts, tonumber(value))
+	end
+
+	if #parts == 1 and parts[1] then
+		return Vector3.new(parts[1], parts[1], parts[1])
+	end
+
+	if parts[1] and parts[2] and parts[3] then
+		return Vector3.new(parts[1], parts[2], parts[3])
+	end
+
+	return defaultValue
 end
 
 local function getCharacter()
@@ -319,8 +342,7 @@ local function updateExpanderPart(part)
 	end
 
 	pcall(function()
-		local size = SETTINGS.Expander.Size
-		part.Size = Vector3.new(size, size, size)
+		part.Size = SETTINGS.Expander.Size
 		part.CanCollide = false
 		part.Transparency = SETTINGS.Expander.Enabled and 0.5 or 1
 		part.Material = Enum.Material.Neon
@@ -425,7 +447,7 @@ local function getHookActive(stats)
 	return hooking and hooking.Value == true
 end
 
-local function applyLiveGearRuntime()
+local function applyLiveGearRuntime(deltaTime)
 	if not SETTINGS.Gear.Applied then
 		return
 	end
@@ -449,15 +471,11 @@ local function applyLiveGearRuntime()
 	if SETTINGS.Gear.VeloCapEnabled then
 		local cap = SETTINGS.Gear.VeloCap
 
-		if currentVelocity and currentVelocity:IsA("ValueBase") and hookActive and hookForce and currentVelocity.Value < cap then
-			currentVelocity.Value = cap
-		elseif currentVelocity and currentVelocity:IsA("ValueBase") and currentVelocity.Value > cap then
+		if currentVelocity and currentVelocity:IsA("ValueBase") and currentVelocity.Value > cap then
 			currentVelocity.Value = cap
 		end
 
-		if force and force:IsA("ValueBase") and hookActive and hookForce and force.Value < cap then
-			force.Value = cap
-		elseif force and force:IsA("ValueBase") and force.Value > cap then
+		if force and force:IsA("ValueBase") and force.Value > cap then
 			force.Value = cap
 		end
 
@@ -466,10 +484,22 @@ local function applyLiveGearRuntime()
 			local magnitude = velocity.Magnitude
 
 			if magnitude > 0 then
-				local targetVelocity = velocity.Unit * cap
+				local physicalSpeed = math.max(magnitude, root.AssemblyLinearVelocity.Magnitude)
+
+				if gearRuntimeSpeed <= 0 then
+					gearRuntimeSpeed = physicalSpeed
+				end
+
+				local gainScale = SETTINGS.Gear.VelocityGainEnabled and math.max(0.1, SETTINGS.Gear.VelocityGainMultiplier - 1) or 0.35
+				local rampAmount = SETTINGS.Gear.VeloCapRampRate * gainScale * (deltaTime or 1 / 60)
+				gearRuntimeSpeed = math.min(cap, gearRuntimeSpeed + rampAmount)
+
+				local targetVelocity = velocity.Unit * gearRuntimeSpeed
 				hookForce.Velocity = targetVelocity
 				root.AssemblyLinearVelocity = targetVelocity
 			end
+		else
+			gearRuntimeSpeed = 0
 		end
 	end
 end
@@ -487,6 +517,7 @@ local function stopGearRuntime()
 	if gearRuntimeConnection then
 		RunService:UnbindFromRenderStep("CheddarCheeseGearRuntime")
 		gearRuntimeConnection = nil
+		gearRuntimeSpeed = 0
 	end
 end
 
@@ -1233,15 +1264,15 @@ local expanderCard = createCard(pageMain, 16, 220, 680, 190, "Expander")
 createToggle(expanderCard, 58, "Nape hitbox expander", function()
 	return SETTINGS.Expander.Enabled
 end, setExpanderEnabled)
-createBox(expanderCard, 104, "Nape hitbox size", SETTINGS.Expander.Size, function(text)
-	SETTINGS.Expander.Size = numberOr(SETTINGS.Expander.Size, text)
+createBox(expanderCard, 104, "Nape hitbox size X,Y,Z", vectorToText(SETTINGS.Expander.Size), function(text)
+	SETTINGS.Expander.Size = vectorOr(SETTINGS.Expander.Size, text)
 	if SETTINGS.Expander.Enabled then
 		scanExpanders()
 	end
 end)
 pageMain.CanvasSize = UDim2.new(0, 0, 0, 455)
 
-local gearCard = createCard(pageGear, 16, 16, 680, 555, "Gear Multipliers")
+local gearCard = createCard(pageGear, 16, 16, 680, 640, "Gear Multipliers")
 createToggle(gearCard, 58, "Enable gear", function()
 	return SETTINGS.Gear.Applied
 end, function(state)
@@ -1259,6 +1290,10 @@ end, function(state)
 	SETTINGS.Gear.VeloCapEnabled = state
 end, function(text)
 	SETTINGS.Gear.VeloCap = numberOr(SETTINGS.Gear.VeloCap, text)
+end)
+y += 82
+createBox(gearCard, y, "Velo cap ramp rate", SETTINGS.Gear.VeloCapRampRate, function(text)
+	SETTINGS.Gear.VeloCapRampRate = numberOr(SETTINGS.Gear.VeloCapRampRate, text)
 end)
 y += 82
 createOptionBox(gearCard, y, "Turn speed multiplier", SETTINGS.Gear.TurnSpeedMultiplier, function()
@@ -1292,7 +1327,7 @@ end, function(state)
 end, function(text)
 	SETTINGS.Gear.VelocityGainMultiplier = numberOr(SETTINGS.Gear.VelocityGainMultiplier, text)
 end)
-pageGear.CanvasSize = UDim2.new(0, 0, 0, 610)
+pageGear.CanvasSize = UDim2.new(0, 0, 0, 695)
 
 local refillCard = createCard(pageRefill, 16, 16, 680, 430, "Gear Refill")
 createButton(refillCard, 54, "REFILL GEAR", refillGearData)
