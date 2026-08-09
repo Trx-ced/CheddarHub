@@ -49,6 +49,11 @@ local SETTINGS = {
 		Fov = 70,
 		GearVelocityEnabled = false,
 	},
+
+	Visuals = {
+		EspEnabled = false,
+		EspRenderDistance = 5000,
+	},
 }
 
 local COLORS = {
@@ -86,10 +91,12 @@ local expanderConnection
 local fovConnection
 local gearVelocityConnection
 local gearRuntimeConnection
+local espCharacterAddedConnection
 local lastExpanderScan = 0
 local originalGearValues = {}
 local expanderParts = {}
 local refillDurabilityBox
+local espConnections = {}
 
 local function mk(className, props)
 	local obj = Instance.new(className)
@@ -278,6 +285,8 @@ local function updateNullifier()
 	ensureBool("TitanGrabbed")
 	ensureFolder("CantBeGrabbed")
 	ensureFolder("TitanGrabImmune")
+	ensureFolder("TitanIgnore")
+	ensureFolder("NoBearAgro")
 
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid then
@@ -638,6 +647,130 @@ local function setGearVelocityEnabled(state)
 		gearVelocityConnection:Disconnect()
 		gearVelocityConnection = nil
 		updateGearVelocityUi()
+	end
+end
+
+local function getHealthText(humanoid)
+	if not humanoid then
+		return "N/A"
+	end
+	return math.floor(humanoid.Health) .. "/" .. math.floor(humanoid.MaxHealth)
+end
+
+local function removeEsp(model)
+	local existing = model and model:FindFirstChild("ESP_Billboard")
+	if existing then
+		existing:Destroy()
+	end
+
+	local connection = espConnections[model]
+	if connection then
+		connection:Disconnect()
+		espConnections[model] = nil
+	end
+end
+
+local function createEsp(model)
+	if not SETTINGS.Visuals.EspEnabled then
+		return
+	end
+
+	if not model or not model:IsA("Model") or model == getCharacter() then
+		return
+	end
+
+	if model:FindFirstChild("ESP_Billboard") then
+		return
+	end
+
+	local head = model:FindFirstChild("Head") or model:FindFirstChildWhichIsA("BasePart")
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not head then
+		return
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "ESP_Billboard"
+	billboard.Adornee = head
+	billboard.Size = UDim2.new(0, 200, 0, 50)
+	billboard.StudsOffset = Vector3.new(0, 3, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = model
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Name = "ESP_Label"
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLabel.TextStrokeTransparency = 0
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textLabel.Font = Enum.Font.SourceSansBold
+	textLabel.TextSize = 14
+	textLabel.TextYAlignment = Enum.TextYAlignment.Top
+	textLabel.Parent = billboard
+
+	espConnections[model] = RunService.RenderStepped:Connect(function()
+		if not SETTINGS.Visuals.EspEnabled or not model:IsDescendantOf(Workspace) or not head:IsDescendantOf(Workspace) then
+			removeEsp(model)
+			return
+		end
+
+		local localCharacter = player.Character
+		local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
+		local distance = nil
+
+		if localRoot then
+			distance = math.floor((head.Position - localRoot.Position).Magnitude)
+		end
+
+		local inRange = not distance or distance <= SETTINGS.Visuals.EspRenderDistance
+		billboard.Enabled = inRange
+
+		if inRange then
+			local distanceText = distance and tostring(distance) .. " studs" or "N/A"
+			textLabel.Text = string.format("%s\nHP: %s\n[%s]", model.Name, getHealthText(humanoid), distanceText)
+		end
+	end)
+end
+
+local function scanEsp()
+	local characters = Workspace:FindFirstChild("Characters")
+	if not characters then
+		return
+	end
+
+	for _, model in ipairs(characters:GetChildren()) do
+		task.defer(createEsp, model)
+	end
+end
+
+local function setEspEnabled(state)
+	SETTINGS.Visuals.EspEnabled = state
+
+	if state then
+		scanEsp()
+		local characters = Workspace:FindFirstChild("Characters")
+		if characters and not espCharacterAddedConnection then
+			espCharacterAddedConnection = characters.ChildAdded:Connect(function(child)
+				task.defer(createEsp, child)
+			end)
+		end
+	else
+		if espCharacterAddedConnection then
+			espCharacterAddedConnection:Disconnect()
+			espCharacterAddedConnection = nil
+		end
+
+		for model in pairs(espConnections) do
+			removeEsp(model)
+		end
+
+		local characters = Workspace:FindFirstChild("Characters")
+		if characters then
+			for _, model in ipairs(characters:GetChildren()) do
+				removeEsp(model)
+			end
+		end
 	end
 end
 
@@ -1077,13 +1210,15 @@ local pageMain = createPage("Main")
 local pageGear = createPage("Gear")
 local pageRefill = createPage("Refill")
 local pageAttributes = createPage("Attributes")
+local pageVisuals = createPage("Visuals")
 local pageMisc = createPage("Misc")
 
 createTab(16, "Main", "Main")
 createTab(60, "Gear", "Gear")
 createTab(104, "Refill", "Refill")
 createTab(148, "Attributes", "Attributes")
-createTab(192, "Misc", "Misc")
+createTab(192, "Visuals", "Visuals")
+createTab(236, "Misc", "Misc")
 
 local mainCard = createCard(pageMain, 16, 16, 680, 180, "Nullifier")
 createToggle(mainCard, 58, "Titan grab nullifier", function()
@@ -1207,6 +1342,15 @@ createBox(attributesCard, 228, "Precision", SETTINGS.Attributes.Precision, funct
 		applyAttributes()
 	end
 end)
+
+local visualsCard = createCard(pageVisuals, 16, 16, 680, 230, "ESP")
+createToggle(visualsCard, 58, "Character ESP", function()
+	return SETTINGS.Visuals.EspEnabled
+end, setEspEnabled)
+createBox(visualsCard, 104, "Render distance", SETTINGS.Visuals.EspRenderDistance, function(text)
+	SETTINGS.Visuals.EspRenderDistance = math.max(0, numberOr(SETTINGS.Visuals.EspRenderDistance, text))
+end)
+pageVisuals.CanvasSize = UDim2.new(0, 0, 0, 285)
 
 local miscCard = createCard(pageMisc, 16, 16, 680, 260, "Camera")
 createToggle(miscCard, 58, "FOV lock", function()
