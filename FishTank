@@ -31,7 +31,7 @@ local SETTINGS = {
 		StartVelocityMultiplier = 1.85,
 		VelocityGainMultiplier = 2.5,
 		RefillKey = Enum.KeyCode.U,
-		BladesDurability = 6,
+		BladesDurability = 20,
 		Blades = 6,
 		Gas = 100,
 		Gas2 = 100,
@@ -42,6 +42,12 @@ local SETTINGS = {
 		Acceleration = 10,
 		Strength = 10,
 		Precision = 10,
+	},
+
+	Misc = {
+		FovLockEnabled = false,
+		Fov = 70,
+		GearVelocityEnabled = false,
 	},
 }
 
@@ -77,9 +83,13 @@ local grabbedValue
 local nullifierConnection
 local attributesConnection
 local expanderConnection
+local fovConnection
+local gearVelocityConnection
+local gearRuntimeConnection
 local lastExpanderScan = 0
 local originalGearValues = {}
 local expanderParts = {}
+local refillDurabilityBox
 
 local function mk(className, props)
 	local obj = Instance.new(className)
@@ -397,6 +407,80 @@ local function cacheOriginalGear(name, gear)
 	}
 end
 
+local function getHookActive(stats)
+	if not stats then
+		return false
+	end
+
+	local hooking = stats:FindFirstChild("Hooking")
+	return hooking and hooking.Value == true
+end
+
+local function applyLiveGearRuntime()
+	if not SETTINGS.Gear.Applied then
+		return
+	end
+
+	local char = getCharacter()
+	if not char then
+		return
+	end
+
+	local stats = char:FindFirstChild("ODMGStats")
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if not stats or not root then
+		return
+	end
+
+	local currentVelocity = stats:FindFirstChild("CurrentVelocity")
+	local force = stats:FindFirstChild("Force")
+	local hookActive = getHookActive(stats)
+	local hookForce = root:FindFirstChild("HookDirectionalForce")
+
+	if SETTINGS.Gear.VeloCapEnabled then
+		local cap = SETTINGS.Gear.VeloCap
+
+		if currentVelocity and currentVelocity:IsA("ValueBase") and hookActive and hookForce and currentVelocity.Value < cap then
+			currentVelocity.Value = cap
+		elseif currentVelocity and currentVelocity:IsA("ValueBase") and currentVelocity.Value > cap then
+			currentVelocity.Value = cap
+		end
+
+		if force and force:IsA("ValueBase") and hookActive and hookForce and force.Value < cap then
+			force.Value = cap
+		elseif force and force:IsA("ValueBase") and force.Value > cap then
+			force.Value = cap
+		end
+
+		if hookActive and hookForce and hookForce:IsA("BodyVelocity") then
+			local velocity = hookForce.Velocity
+			local magnitude = velocity.Magnitude
+
+			if magnitude > 0 then
+				local targetVelocity = velocity.Unit * cap
+				hookForce.Velocity = targetVelocity
+				root.AssemblyLinearVelocity = targetVelocity
+			end
+		end
+	end
+end
+
+local function startGearRuntime()
+	if gearRuntimeConnection then
+		return
+	end
+
+	RunService:BindToRenderStep("CheddarCheeseGearRuntime", Enum.RenderPriority.Last.Value + 100, applyLiveGearRuntime)
+	gearRuntimeConnection = true
+end
+
+local function stopGearRuntime()
+	if gearRuntimeConnection then
+		RunService:UnbindFromRenderStep("CheddarCheeseGearRuntime")
+		gearRuntimeConnection = nil
+	end
+end
+
 local function applyGearBoost()
 	local gearVariants = getGearVariants()
 
@@ -414,6 +498,7 @@ local function applyGearBoost()
 	end
 
 	SETTINGS.Gear.Applied = true
+	startGearRuntime()
 end
 
 local function resetGearBoost()
@@ -431,6 +516,7 @@ local function resetGearBoost()
 	end
 
 	SETTINGS.Gear.Applied = false
+	stopGearRuntime()
 end
 
 local function refillGearData()
@@ -439,12 +525,17 @@ local function refillGearData()
 		return false
 	end
 
+	if refillDurabilityBox then
+		SETTINGS.Gear.BladesDurability = numberOr(SETTINGS.Gear.BladesDurability, refillDurabilityBox.Text)
+	end
+
 	local changed = false
-	changed = setDataValue(data, "BladesDurability", SETTINGS.Gear.BladesDurability) or changed
 	changed = setDataValue(data, "MaxDurability", SETTINGS.Gear.BladesDurability) or changed
 	changed = setDataValue(data, "Blades", SETTINGS.Gear.Blades) or changed
 	changed = setDataValue(data, "Gas", SETTINGS.Gear.Gas) or changed
 	changed = setDataValue(data, "Gas2", SETTINGS.Gear.Gas2) or changed
+	task.wait(0.5)
+	changed = setDataValue(data, "BladeDurability", SETTINGS.Gear.BladesDurability) or changed
 	return changed
 end
 
@@ -475,6 +566,78 @@ local function setAttributesEnabled(state)
 	elseif attributesConnection then
 		attributesConnection:Disconnect()
 		attributesConnection = nil
+	end
+end
+
+local function applyFovLock()
+	local camera = Workspace.CurrentCamera
+	if camera then
+		camera.FieldOfView = SETTINGS.Misc.Fov
+	end
+end
+
+local function setFovLockEnabled(state)
+	SETTINGS.Misc.FovLockEnabled = state
+
+	if state then
+		applyFovLock()
+		if not fovConnection then
+			fovConnection = RunService.RenderStepped:Connect(function()
+				if SETTINGS.Misc.FovLockEnabled then
+					applyFovLock()
+				end
+			end)
+		end
+	elseif fovConnection then
+		fovConnection:Disconnect()
+		fovConnection = nil
+	end
+end
+
+local function getGearVelocityLabel()
+	local uiEffects = playerGui:FindFirstChild("UiEffects")
+	if not uiEffects then
+		return nil
+	end
+	return uiEffects:FindFirstChild("GearVel")
+end
+
+local function updateGearVelocityUi()
+	player:SetAttribute("LogisticsVelocityCalculation", SETTINGS.Misc.GearVelocityEnabled)
+
+	local gearVel = getGearVelocityLabel()
+	if not gearVel then
+		return
+	end
+
+	if not SETTINGS.Misc.GearVelocityEnabled then
+		gearVel.Visible = false
+		return
+	end
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		gearVel.Visible = false
+		return
+	end
+
+	gearVel.Text = tostring(math.round(root.AssemblyLinearVelocity.Magnitude))
+	gearVel.Visible = true
+end
+
+local function setGearVelocityEnabled(state)
+	SETTINGS.Misc.GearVelocityEnabled = state
+	updateGearVelocityUi()
+
+	if state then
+		if not gearVelocityConnection then
+			gearVelocityConnection = RunService.RenderStepped:Connect(updateGearVelocityUi)
+		end
+	elseif gearVelocityConnection then
+		gearVelocityConnection:Disconnect()
+		gearVelocityConnection = nil
+		updateGearVelocityUi()
 	end
 end
 
@@ -914,11 +1077,13 @@ local pageMain = createPage("Main")
 local pageGear = createPage("Gear")
 local pageRefill = createPage("Refill")
 local pageAttributes = createPage("Attributes")
+local pageMisc = createPage("Misc")
 
 createTab(16, "Main", "Main")
 createTab(60, "Gear", "Gear")
 createTab(104, "Refill", "Refill")
 createTab(148, "Attributes", "Attributes")
+createTab(192, "Misc", "Misc")
 
 local mainCard = createCard(pageMain, 16, 16, 680, 180, "Nullifier")
 createToggle(mainCard, 58, "Titan grab nullifier", function()
@@ -942,10 +1107,17 @@ end)
 pageMain.CanvasSize = UDim2.new(0, 0, 0, 455)
 
 local gearCard = createCard(pageGear, 16, 16, 680, 555, "Gear Multipliers")
-createButton(gearCard, 54, "APPLY GEAR", applyGearBoost)
-createButton(gearCard, 94, "RESET GEAR", resetGearBoost)
+createToggle(gearCard, 58, "Enable gear", function()
+	return SETTINGS.Gear.Applied
+end, function(state)
+	if state then
+		applyGearBoost()
+	else
+		resetGearBoost()
+	end
+end)
 
-local y = 152
+local y = 128
 createOptionBox(gearCard, y, "Velo cap", SETTINGS.Gear.VeloCap, function()
 	return SETTINGS.Gear.VeloCapEnabled
 end, function(state)
@@ -996,7 +1168,7 @@ end, function(key)
 end)
 
 y = 158
-createBox(refillCard, y, "Blades durability / max durability", SETTINGS.Gear.BladesDurability, function(text)
+refillDurabilityBox = createBox(refillCard, y, "Blade durability / max durability", SETTINGS.Gear.BladesDurability, function(text)
 	SETTINGS.Gear.BladesDurability = numberOr(SETTINGS.Gear.BladesDurability, text)
 end)
 y += 68
@@ -1035,6 +1207,21 @@ createBox(attributesCard, 228, "Precision", SETTINGS.Attributes.Precision, funct
 		applyAttributes()
 	end
 end)
+
+local miscCard = createCard(pageMisc, 16, 16, 680, 260, "Camera")
+createToggle(miscCard, 58, "FOV lock", function()
+	return SETTINGS.Misc.FovLockEnabled
+end, setFovLockEnabled)
+createBox(miscCard, 104, "Locked FOV", SETTINGS.Misc.Fov, function(text)
+	SETTINGS.Misc.Fov = math.clamp(numberOr(SETTINGS.Misc.Fov, text), 1, 120)
+	if SETTINGS.Misc.FovLockEnabled then
+		applyFovLock()
+	end
+end)
+createToggle(miscCard, 190, "Show gear velocity", function()
+	return SETTINGS.Misc.GearVelocityEnabled
+end, setGearVelocityEnabled)
+pageMisc.CanvasSize = UDim2.new(0, 0, 0, 310)
 
 closeBtn.MouseButton1Click:Connect(function()
 	gui.Enabled = false
