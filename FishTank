@@ -1,0 +1,1099 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local SETTINGS = {
+	UiToggleKey = Enum.KeyCode.RightShift,
+
+	NullifierEnabled = false,
+
+	Expander = {
+		Enabled = false,
+		Size = 100,
+	},
+
+	Gear = {
+		Applied = false,
+		VeloCapEnabled = true,
+		TurnSpeedEnabled = true,
+		DexDrainEnabled = true,
+		StartVelocityEnabled = true,
+		VelocityGainEnabled = true,
+		VeloCap = 180,
+		TurnSpeedMultiplier = 3,
+		DexDrainDivisor = 0.6,
+		StartVelocityMultiplier = 1.85,
+		VelocityGainMultiplier = 2.5,
+		RefillKey = Enum.KeyCode.U,
+		BladesDurability = 6,
+		Blades = 6,
+		Gas = 100,
+		Gas2 = 100,
+	},
+
+	Attributes = {
+		Enabled = false,
+		Acceleration = 10,
+		Strength = 10,
+		Precision = 10,
+	},
+}
+
+local COLORS = {
+	BG = Color3.fromRGB(7, 10, 14),
+	TOP = Color3.fromRGB(11, 16, 24),
+	SIDE = Color3.fromRGB(9, 14, 21),
+	PANEL = Color3.fromRGB(14, 20, 30),
+	PANEL2 = Color3.fromRGB(18, 28, 42),
+	INPUT = Color3.fromRGB(9, 15, 24),
+	STROKE = Color3.fromRGB(35, 122, 200),
+	STROKE_SOFT = Color3.fromRGB(24, 82, 140),
+	TEXT = Color3.fromRGB(238, 245, 255),
+	SUB = Color3.fromRGB(155, 186, 220),
+	ON = Color3.fromRGB(31, 121, 201),
+	OFF = Color3.fromRGB(43, 56, 74),
+	ACCENT = Color3.fromRGB(49, 144, 224),
+	TAB = Color3.fromRGB(16, 23, 34),
+	TAB_ACTIVE = Color3.fromRGB(26, 52, 84),
+}
+
+local uiState = {
+	currentPage = "Main",
+	capturingKeybind = nil,
+	dragging = false,
+	dragStart = nil,
+	startPos = nil,
+}
+
+local keybindSetters = {}
+local character
+local grabbedValue
+local nullifierConnection
+local attributesConnection
+local expanderConnection
+local lastExpanderScan = 0
+local originalGearValues = {}
+local expanderParts = {}
+
+local function mk(className, props)
+	local obj = Instance.new(className)
+	for k, v in pairs(props or {}) do
+		obj[k] = v
+	end
+	return obj
+end
+
+local function addCorner(obj, radius)
+	mk("UICorner", {
+		Parent = obj,
+		CornerRadius = UDim.new(0, radius),
+	})
+end
+
+local function addStroke(obj, color, thickness, transparency)
+	mk("UIStroke", {
+		Parent = obj,
+		Color = color,
+		Thickness = thickness,
+		Transparency = transparency or 0,
+	})
+end
+
+local function addGradient(obj, c1, c2, rotation)
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, c1),
+		ColorSequenceKeypoint.new(1, c2),
+	})
+	grad.Rotation = rotation or 90
+	grad.Parent = obj
+	return grad
+end
+
+local function keyName(keyCode)
+	return tostring(keyCode):gsub("Enum.KeyCode.", "")
+end
+
+local function numberOr(defaultValue, text)
+	local n = tonumber(text)
+	if n == nil then
+		return defaultValue
+	end
+	return n
+end
+
+local function getCharacter()
+	local characters = Workspace:FindFirstChild("Characters")
+	if characters then
+		local found = characters:FindFirstChild(player.Name)
+		if found then
+			return found
+		end
+	end
+	return player.Character
+end
+
+local function getDataFolder()
+	local char = getCharacter()
+	return char and char:FindFirstChild("Data")
+end
+
+local function setDataValue(data, name, value)
+	if not data then
+		return false
+	end
+
+	local changed = false
+	local obj = data:FindFirstChild(name)
+	if not obj then
+		obj = data:FindFirstChild(name, true)
+	end
+
+	if obj and obj:IsA("ValueBase") then
+		obj.Value = value
+		changed = true
+	end
+
+	if data:GetAttribute(name) ~= nil then
+		data:SetAttribute(name, value)
+		changed = true
+	end
+
+	return changed
+end
+
+local function createGrabbed()
+	if not character then
+		return
+	end
+
+	local existing = character:FindFirstChild("Grabbed")
+	if existing and existing:IsA("BoolValue") then
+		grabbedValue = existing
+		grabbedValue.Value = true
+		return
+	end
+
+	if existing then
+		pcall(function()
+			existing:Destroy()
+		end)
+	end
+
+	local success, value = pcall(function()
+		local grabbed = Instance.new("BoolValue")
+		grabbed.Name = "Grabbed"
+		grabbed.Value = true
+		grabbed.Parent = character
+		return grabbed
+	end)
+
+	if success then
+		grabbedValue = value
+		grabbedValue.AncestryChanged:Connect(function(_, parent)
+			if SETTINGS.NullifierEnabled and parent == nil then
+				task.defer(createGrabbed)
+			end
+		end)
+	end
+end
+
+local function ensureBool(name)
+	if not character then
+		return
+	end
+
+	local existing = character:FindFirstChild(name)
+	if existing and existing:IsA("BoolValue") then
+		existing.Value = true
+		return
+	end
+
+	if existing then
+		pcall(function()
+			existing:Destroy()
+		end)
+	end
+
+	local value = Instance.new("BoolValue")
+	value.Name = name
+	value.Value = true
+	value.Parent = character
+end
+
+local function ensureFolder(name)
+	if not character then
+		return
+	end
+
+	local existing = character:FindFirstChild(name)
+	if existing and existing:IsA("Folder") then
+		return
+	end
+
+	if existing then
+		pcall(function()
+			existing:Destroy()
+		end)
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = character
+end
+
+local function updateNullifier()
+	if not SETTINGS.NullifierEnabled then
+		return
+	end
+
+	character = getCharacter()
+	if not character then
+		return
+	end
+
+	if not grabbedValue or not grabbedValue.Parent or grabbedValue.Parent ~= character then
+		createGrabbed()
+	else
+		grabbedValue.Value = true
+	end
+
+	ensureBool("BeingGrabbed")
+	ensureBool("TitanGrabbed")
+	ensureFolder("CantBeGrabbed")
+	ensureFolder("TitanGrabImmune")
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.PlatformStand = false
+		humanoid.Sit = false
+		humanoid.AutoRotate = true
+	end
+end
+
+local function setNullifierEnabled(state)
+	SETTINGS.NullifierEnabled = state
+
+	if state then
+		character = getCharacter()
+		grabbedValue = nil
+		createGrabbed()
+
+		if not nullifierConnection then
+			nullifierConnection = RunService.RenderStepped:Connect(updateNullifier)
+		end
+	elseif nullifierConnection then
+		nullifierConnection:Disconnect()
+		nullifierConnection = nil
+	end
+end
+
+local function updateExpanderPart(part)
+	if not part or not part.Parent or not part:IsA("BasePart") then
+		return
+	end
+
+	pcall(function()
+		local size = SETTINGS.Expander.Size
+		part.Size = Vector3.new(size, size, size)
+		part.CanCollide = false
+		part.Transparency = SETTINGS.Expander.Enabled and 0.5 or 1
+		part.Material = Enum.Material.Neon
+		part.BrickColor = BrickColor.new("Bright red")
+
+		local box = part:FindFirstChild("HitboxBox")
+		if not box then
+			box = Instance.new("SelectionBox")
+			box.Name = "HitboxBox"
+			box.Adornee = part
+			box.LineThickness = 0.05
+			box.Color3 = Color3.new(1, 0, 0)
+			box.Parent = part
+		end
+
+		box.Transparency = SETTINGS.Expander.Enabled and 0.5 or 1
+		box.Visible = SETTINGS.Expander.Enabled
+	end)
+end
+
+local function scanExpanders()
+	local characters = Workspace:FindFirstChild("Characters")
+	if not characters then
+		return
+	end
+
+	for _, model in ipairs(characters:GetChildren()) do
+		if model:IsA("Model") then
+			local nape = model:FindFirstChild("NapeHB")
+			local handle = nape and nape:FindFirstChild("Handle")
+
+			if handle and handle:IsA("BasePart") then
+				expanderParts[handle] = true
+				updateExpanderPart(handle)
+			end
+		end
+	end
+
+	for part in pairs(expanderParts) do
+		if part and part.Parent then
+			updateExpanderPart(part)
+		else
+			expanderParts[part] = nil
+		end
+	end
+end
+
+local function setExpanderEnabled(state)
+	SETTINGS.Expander.Enabled = state
+
+	if state then
+		scanExpanders()
+		if not expanderConnection then
+			expanderConnection = RunService.Heartbeat:Connect(function()
+				if os.clock() - lastExpanderScan >= 0.3 then
+					lastExpanderScan = os.clock()
+					scanExpanders()
+				end
+			end)
+		end
+	elseif expanderConnection then
+		expanderConnection:Disconnect()
+		expanderConnection = nil
+
+		for part in pairs(expanderParts) do
+			if part and part.Parent then
+				local box = part:FindFirstChild("HitboxBox")
+				if box then
+					box.Visible = false
+				end
+				part.Transparency = 1
+			end
+		end
+	end
+end
+
+local function getGearVariants()
+	local odmgStats = ReplicatedStorage:WaitForChild("ODMGStats")
+	return require(odmgStats:WaitForChild("GearVariants"))
+end
+
+local function cacheOriginalGear(name, gear)
+	if originalGearValues[name] then
+		return
+	end
+
+	originalGearValues[name] = {
+		VeloCap = gear.VeloCap,
+		TurnSpeed = gear.TurnSpeed,
+		DexDrain = gear.DexDrain,
+		StartVelocity = gear.StartVelocity,
+		VelocityGain = gear.VelocityGain,
+	}
+end
+
+local function applyGearBoost()
+	local gearVariants = getGearVariants()
+
+	for gearName, gear in pairs(gearVariants) do
+		if type(gear) == "table" then
+			cacheOriginalGear(gearName, gear)
+
+			local original = originalGearValues[gearName]
+			gear.VeloCap = SETTINGS.Gear.VeloCapEnabled and SETTINGS.Gear.VeloCap or original.VeloCap
+			gear.TurnSpeed = SETTINGS.Gear.TurnSpeedEnabled and original.TurnSpeed * SETTINGS.Gear.TurnSpeedMultiplier or original.TurnSpeed
+			gear.DexDrain = SETTINGS.Gear.DexDrainEnabled and original.DexDrain / SETTINGS.Gear.DexDrainDivisor or original.DexDrain
+			gear.StartVelocity = SETTINGS.Gear.StartVelocityEnabled and original.StartVelocity * SETTINGS.Gear.StartVelocityMultiplier or original.StartVelocity
+			gear.VelocityGain = SETTINGS.Gear.VelocityGainEnabled and original.VelocityGain * SETTINGS.Gear.VelocityGainMultiplier or original.VelocityGain
+		end
+	end
+
+	SETTINGS.Gear.Applied = true
+end
+
+local function resetGearBoost()
+	local gearVariants = getGearVariants()
+
+	for gearName, original in pairs(originalGearValues) do
+		local gear = gearVariants[gearName]
+		if type(gear) == "table" then
+			gear.VeloCap = original.VeloCap
+			gear.TurnSpeed = original.TurnSpeed
+			gear.DexDrain = original.DexDrain
+			gear.StartVelocity = original.StartVelocity
+			gear.VelocityGain = original.VelocityGain
+		end
+	end
+
+	SETTINGS.Gear.Applied = false
+end
+
+local function refillGearData()
+	local data = getDataFolder()
+	if not data then
+		return false
+	end
+
+	local changed = false
+	changed = setDataValue(data, "BladesDurability", SETTINGS.Gear.BladesDurability) or changed
+	changed = setDataValue(data, "MaxDurability", SETTINGS.Gear.BladesDurability) or changed
+	changed = setDataValue(data, "Blades", SETTINGS.Gear.Blades) or changed
+	changed = setDataValue(data, "Gas", SETTINGS.Gear.Gas) or changed
+	changed = setDataValue(data, "Gas2", SETTINGS.Gear.Gas2) or changed
+	return changed
+end
+
+local function applyAttributes()
+	local data = getDataFolder()
+	if not data then
+		return false
+	end
+
+	setDataValue(data, "Acceleration", SETTINGS.Attributes.Acceleration)
+	setDataValue(data, "Strength", SETTINGS.Attributes.Strength)
+	setDataValue(data, "Precision", SETTINGS.Attributes.Precision)
+	return true
+end
+
+local function setAttributesEnabled(state)
+	SETTINGS.Attributes.Enabled = state
+
+	if state then
+		applyAttributes()
+		if not attributesConnection then
+			attributesConnection = RunService.RenderStepped:Connect(function()
+				if SETTINGS.Attributes.Enabled then
+					applyAttributes()
+				end
+			end)
+		end
+	elseif attributesConnection then
+		attributesConnection:Disconnect()
+		attributesConnection = nil
+	end
+end
+
+local oldGui = playerGui:FindFirstChild("CheddarCheese")
+if oldGui then
+	oldGui:Destroy()
+end
+
+local gui = mk("ScreenGui", {
+	Name = "CheddarCheese",
+	Parent = playerGui,
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+local main = mk("Frame", {
+	Parent = gui,
+	Size = UDim2.new(0, 930, 0, 600),
+	Position = UDim2.new(0.5, -465, 0.5, -300),
+	BackgroundColor3 = COLORS.BG,
+	BorderSizePixel = 0,
+})
+addCorner(main, 18)
+addStroke(main, COLORS.STROKE, 1.4, 0.08)
+
+local glow = mk("ImageLabel", {
+	Parent = main,
+	BackgroundTransparency = 1,
+	Image = "rbxassetid://5028857084",
+	ImageColor3 = COLORS.ACCENT,
+	ImageTransparency = 0.72,
+	Size = UDim2.new(1, 120, 1, 120),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	ZIndex = 0,
+})
+
+local topBar = mk("Frame", {
+	Parent = main,
+	Size = UDim2.new(1, 0, 0, 56),
+	BackgroundColor3 = COLORS.TOP,
+	BorderSizePixel = 0,
+})
+addCorner(topBar, 18)
+addStroke(topBar, COLORS.STROKE_SOFT, 1, 0.18)
+mk("Frame", {
+	Parent = topBar,
+	Position = UDim2.new(0, 0, 1, -18),
+	Size = UDim2.new(1, 0, 0, 18),
+	BackgroundColor3 = COLORS.TOP,
+	BorderSizePixel = 0,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 6),
+	Size = UDim2.new(1, -72, 0, 22),
+	Text = "CheddarCheese",
+	TextColor3 = COLORS.TEXT,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.GothamBold,
+	TextSize = 20,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0, 16, 0, 28),
+	Size = UDim2.new(1, -72, 0, 16),
+	Text = "BC V2/FishTank",
+	TextColor3 = COLORS.SUB,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+})
+
+local closeBtn = mk("TextButton", {
+	Parent = topBar,
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -10, 0.5, 0),
+	Size = UDim2.new(0, 28, 0, 24),
+	BackgroundColor3 = Color3.fromRGB(20, 25, 35),
+	BorderSizePixel = 0,
+	Text = "X",
+	TextColor3 = COLORS.TEXT,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	AutoButtonColor = false,
+})
+addCorner(closeBtn, 8)
+addStroke(closeBtn, COLORS.STROKE, 1, 0.2)
+
+local sideBar = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 0, 0, 56),
+	Size = UDim2.new(0, 190, 1, -56),
+	BackgroundColor3 = COLORS.SIDE,
+	BorderSizePixel = 0,
+})
+addCorner(sideBar, 18)
+addStroke(sideBar, COLORS.STROKE_SOFT, 1, 0.2)
+mk("Frame", {
+	Parent = sideBar,
+	Position = UDim2.new(1, -18, 0, 0),
+	Size = UDim2.new(0, 18, 1, 0),
+	BackgroundColor3 = COLORS.SIDE,
+	BorderSizePixel = 0,
+})
+
+local contentHolder = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 190, 0, 56),
+	Size = UDim2.new(1, -190, 1, -56),
+	BackgroundTransparency = 1,
+})
+
+local pages = {}
+local tabButtons = {}
+
+local function createPage(name)
+	local page = mk("ScrollingFrame", {
+		Parent = contentHolder,
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		CanvasSize = UDim2.new(0, 0, 0, 900),
+		Visible = false,
+	})
+	pages[name] = page
+	return page
+end
+
+local function switchPage(name)
+	uiState.currentPage = name
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == name
+	end
+	for tabName, button in pairs(tabButtons) do
+		local active = tabName == name
+		button.BackgroundColor3 = active and COLORS.TAB_ACTIVE or COLORS.TAB
+		button.TextColor3 = active and COLORS.TEXT or COLORS.SUB
+	end
+end
+
+local function createTab(y, text, pageName)
+	local btn = mk("TextButton", {
+		Parent = sideBar,
+		Position = UDim2.new(0, 12, 0, y),
+		Size = UDim2.new(1, -24, 0, 40),
+		BackgroundColor3 = COLORS.TAB,
+		BorderSizePixel = 0,
+		Text = "   " .. text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+		AutoButtonColor = false,
+	})
+	addCorner(btn, 10)
+	addStroke(btn, COLORS.STROKE_SOFT, 1, 0.22)
+	btn.MouseButton1Click:Connect(function()
+		switchPage(pageName)
+	end)
+	tabButtons[pageName] = btn
+	return btn
+end
+
+local function createCard(parent, x, y, w, h, title)
+	local card = mk("Frame", {
+		Parent = parent,
+		Position = UDim2.new(0, x, 0, y),
+		Size = UDim2.new(0, w, 0, h),
+		BackgroundColor3 = COLORS.PANEL,
+		BorderSizePixel = 0,
+	})
+	addCorner(card, 16)
+	addStroke(card, COLORS.STROKE_SOFT, 1, 0.12)
+	addGradient(card, COLORS.PANEL, COLORS.PANEL2, 90)
+	mk("TextLabel", {
+		Parent = card,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 16, 0, 14),
+		Size = UDim2.new(1, -32, 0, 22),
+		Text = title,
+		TextColor3 = COLORS.TEXT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamBold,
+		TextSize = 16,
+	})
+	return card
+end
+
+local function createLabel(parent, y, text)
+	return mk("TextLabel", {
+		Parent = parent,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 16, 0, y),
+		Size = UDim2.new(1, -32, 0, 18),
+		Text = text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+	})
+end
+
+local function createButton(parent, y, text, callback)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(0, 16, 0, y),
+		Size = UDim2.new(0, 180, 0, 32),
+		BackgroundColor3 = COLORS.ACCENT,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(button, 10)
+	addStroke(button, COLORS.STROKE, 1, 0.14)
+	button.MouseButton1Click:Connect(callback)
+	return button
+end
+
+local function createToggle(parent, y, text, getter, setter)
+	createLabel(parent, y, text)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -100, 0, y - 4),
+		Size = UDim2.new(0, 80, 0, 28),
+		BackgroundColor3 = getter() and COLORS.ON or COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = getter() and "ON" or "OFF",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE, 1, 0.2)
+
+	local function refresh()
+		button.Text = getter() and "ON" or "OFF"
+		TweenService:Create(button, TweenInfo.new(0.15), {
+			BackgroundColor3 = getter() and COLORS.ON or COLORS.OFF,
+		}):Play()
+	end
+
+	button.MouseButton1Click:Connect(function()
+		setter(not getter())
+		refresh()
+	end)
+
+	refresh()
+	return button, refresh
+end
+
+local function createBox(parent, y, text, defaultValue, applyFn)
+	createLabel(parent, y, text)
+	local box = mk("TextBox", {
+		Parent = parent,
+		Position = UDim2.new(0, 16, 0, y + 22),
+		Size = UDim2.new(1, -128, 0, 32),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = tostring(defaultValue),
+		TextColor3 = COLORS.TEXT,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+	})
+	addCorner(box, 10)
+	addStroke(box, COLORS.STROKE_SOFT, 1, 0.1)
+
+	local btn = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -96, 0, y + 22),
+		Size = UDim2.new(0, 80, 0, 32),
+		BackgroundColor3 = COLORS.ACCENT,
+		BorderSizePixel = 0,
+		Text = "APPLY",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(btn, 10)
+	addStroke(btn, COLORS.STROKE, 1, 0.14)
+
+	btn.MouseButton1Click:Connect(function()
+		applyFn(box.Text)
+	end)
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			applyFn(box.Text)
+		end
+	end)
+	return box, btn
+end
+
+local function createOptionBox(parent, y, text, defaultValue, getEnabled, setEnabled, applyFn)
+	local row = mk("Frame", {
+		Parent = parent,
+		Position = UDim2.new(0, 16, 0, y),
+		Size = UDim2.new(1, -32, 0, 70),
+		BackgroundColor3 = COLORS.INPUT,
+		BackgroundTransparency = 0.22,
+		BorderSizePixel = 0,
+	})
+	addCorner(row, 12)
+	addStroke(row, COLORS.STROKE_SOFT, 1, 0.35)
+
+	mk("TextLabel", {
+		Parent = row,
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, 12, 0, 8),
+		Size = UDim2.new(1, -24, 0, 16),
+		Text = text,
+		TextColor3 = COLORS.SUB,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+	})
+
+	local toggle = mk("TextButton", {
+		Parent = row,
+		Position = UDim2.new(1, -176, 0, 30),
+		Size = UDim2.new(0, 76, 0, 30),
+		BackgroundColor3 = getEnabled() and COLORS.ON or COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = getEnabled() and "ON" or "OFF",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(toggle, 9)
+	addStroke(toggle, COLORS.STROKE, 1, 0.2)
+
+	local box = mk("TextBox", {
+		Parent = row,
+		Position = UDim2.new(0, 12, 0, 30),
+		Size = UDim2.new(1, -204, 0, 30),
+		BackgroundColor3 = COLORS.INPUT,
+		BorderSizePixel = 0,
+		Text = tostring(defaultValue),
+		TextColor3 = COLORS.TEXT,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+	})
+	addCorner(box, 10)
+	addStroke(box, COLORS.STROKE_SOFT, 1, 0.1)
+
+	local apply = mk("TextButton", {
+		Parent = row,
+		Position = UDim2.new(1, -92, 0, 30),
+		Size = UDim2.new(0, 80, 0, 30),
+		BackgroundColor3 = COLORS.ACCENT,
+		BorderSizePixel = 0,
+		Text = "APPLY",
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(apply, 10)
+	addStroke(apply, COLORS.STROKE, 1, 0.14)
+
+	local function refreshToggle()
+		toggle.Text = getEnabled() and "ON" or "OFF"
+		TweenService:Create(toggle, TweenInfo.new(0.15), {
+			BackgroundColor3 = getEnabled() and COLORS.ON or COLORS.OFF,
+		}):Play()
+	end
+
+	toggle.MouseButton1Click:Connect(function()
+		setEnabled(not getEnabled())
+		refreshToggle()
+	end)
+
+	apply.MouseButton1Click:Connect(function()
+		applyFn(box.Text)
+	end)
+
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			applyFn(box.Text)
+		end
+	end)
+
+	refreshToggle()
+	return box, toggle, apply
+end
+
+local function createKeybindRow(parent, y, labelText, getter, setter)
+	createLabel(parent, y, labelText)
+	local button = mk("TextButton", {
+		Parent = parent,
+		Position = UDim2.new(1, -156, 0, y - 4),
+		Size = UDim2.new(0, 136, 0, 28),
+		BackgroundColor3 = COLORS.OFF,
+		BorderSizePixel = 0,
+		Text = keyName(getter()),
+		TextColor3 = COLORS.TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		AutoButtonColor = false,
+	})
+	addCorner(button, 9)
+	addStroke(button, COLORS.STROKE, 1, 0.2)
+
+	local function refresh()
+		if uiState.capturingKeybind == button then
+			button.Text = "PRESS A KEY..."
+			button.BackgroundColor3 = COLORS.ON
+		else
+			button.Text = keyName(getter())
+			button.BackgroundColor3 = COLORS.OFF
+		end
+	end
+
+	button.MouseButton1Click:Connect(function()
+		uiState.capturingKeybind = button
+		keybindSetters[button] = setter
+		refresh()
+	end)
+
+	refresh()
+	return button, refresh
+end
+
+local pageMain = createPage("Main")
+local pageGear = createPage("Gear")
+local pageRefill = createPage("Refill")
+local pageAttributes = createPage("Attributes")
+
+createTab(16, "Main", "Main")
+createTab(60, "Gear", "Gear")
+createTab(104, "Refill", "Refill")
+createTab(148, "Attributes", "Attributes")
+
+local mainCard = createCard(pageMain, 16, 16, 680, 180, "Nullifier")
+createToggle(mainCard, 58, "Titan grab nullifier", function()
+	return SETTINGS.NullifierEnabled
+end, setNullifierEnabled)
+createLabel(mainCard, 98, "Creates local grab markers and clears local grab/carry states.")
+createButton(mainCard, 130, "REFRESH MARKERS", function()
+	updateNullifier()
+end)
+
+local expanderCard = createCard(pageMain, 16, 220, 680, 190, "Expander")
+createToggle(expanderCard, 58, "Nape hitbox expander", function()
+	return SETTINGS.Expander.Enabled
+end, setExpanderEnabled)
+createBox(expanderCard, 104, "Nape hitbox size", SETTINGS.Expander.Size, function(text)
+	SETTINGS.Expander.Size = numberOr(SETTINGS.Expander.Size, text)
+	if SETTINGS.Expander.Enabled then
+		scanExpanders()
+	end
+end)
+pageMain.CanvasSize = UDim2.new(0, 0, 0, 455)
+
+local gearCard = createCard(pageGear, 16, 16, 680, 555, "Gear Multipliers")
+createButton(gearCard, 54, "APPLY GEAR", applyGearBoost)
+createButton(gearCard, 94, "RESET GEAR", resetGearBoost)
+
+local y = 152
+createOptionBox(gearCard, y, "Velo cap", SETTINGS.Gear.VeloCap, function()
+	return SETTINGS.Gear.VeloCapEnabled
+end, function(state)
+	SETTINGS.Gear.VeloCapEnabled = state
+end, function(text)
+	SETTINGS.Gear.VeloCap = numberOr(SETTINGS.Gear.VeloCap, text)
+end)
+y += 82
+createOptionBox(gearCard, y, "Turn speed multiplier", SETTINGS.Gear.TurnSpeedMultiplier, function()
+	return SETTINGS.Gear.TurnSpeedEnabled
+end, function(state)
+	SETTINGS.Gear.TurnSpeedEnabled = state
+end, function(text)
+	SETTINGS.Gear.TurnSpeedMultiplier = numberOr(SETTINGS.Gear.TurnSpeedMultiplier, text)
+end)
+y += 82
+createOptionBox(gearCard, y, "Dex drain divisor", SETTINGS.Gear.DexDrainDivisor, function()
+	return SETTINGS.Gear.DexDrainEnabled
+end, function(state)
+	SETTINGS.Gear.DexDrainEnabled = state
+end, function(text)
+	SETTINGS.Gear.DexDrainDivisor = numberOr(SETTINGS.Gear.DexDrainDivisor, text)
+end)
+y += 82
+createOptionBox(gearCard, y, "Start velocity multiplier", SETTINGS.Gear.StartVelocityMultiplier, function()
+	return SETTINGS.Gear.StartVelocityEnabled
+end, function(state)
+	SETTINGS.Gear.StartVelocityEnabled = state
+end, function(text)
+	SETTINGS.Gear.StartVelocityMultiplier = numberOr(SETTINGS.Gear.StartVelocityMultiplier, text)
+end)
+y += 82
+createOptionBox(gearCard, y, "Velocity gain multiplier", SETTINGS.Gear.VelocityGainMultiplier, function()
+	return SETTINGS.Gear.VelocityGainEnabled
+end, function(state)
+	SETTINGS.Gear.VelocityGainEnabled = state
+end, function(text)
+	SETTINGS.Gear.VelocityGainMultiplier = numberOr(SETTINGS.Gear.VelocityGainMultiplier, text)
+end)
+pageGear.CanvasSize = UDim2.new(0, 0, 0, 610)
+
+local refillCard = createCard(pageRefill, 16, 16, 680, 430, "Gear Refill")
+createButton(refillCard, 54, "REFILL GEAR", refillGearData)
+createKeybindRow(refillCard, 106, "Refill keybind", function()
+	return SETTINGS.Gear.RefillKey
+end, function(key)
+	SETTINGS.Gear.RefillKey = key
+end)
+
+y = 158
+createBox(refillCard, y, "Blades durability / max durability", SETTINGS.Gear.BladesDurability, function(text)
+	SETTINGS.Gear.BladesDurability = numberOr(SETTINGS.Gear.BladesDurability, text)
+end)
+y += 68
+createBox(refillCard, y, "Blades", SETTINGS.Gear.Blades, function(text)
+	SETTINGS.Gear.Blades = numberOr(SETTINGS.Gear.Blades, text)
+end)
+y += 68
+createBox(refillCard, y, "Gas", SETTINGS.Gear.Gas, function(text)
+	SETTINGS.Gear.Gas = numberOr(SETTINGS.Gear.Gas, text)
+end)
+y += 68
+createBox(refillCard, y, "Gas2", SETTINGS.Gear.Gas2, function(text)
+	SETTINGS.Gear.Gas2 = numberOr(SETTINGS.Gear.Gas2, text)
+end)
+pageRefill.CanvasSize = UDim2.new(0, 0, 0, 500)
+
+local attributesCard = createCard(pageAttributes, 16, 16, 680, 340, "Attributes")
+createToggle(attributesCard, 58, "Attribute override", function()
+	return SETTINGS.Attributes.Enabled
+end, setAttributesEnabled)
+createBox(attributesCard, 104, "Acceleration", SETTINGS.Attributes.Acceleration, function(text)
+	SETTINGS.Attributes.Acceleration = numberOr(SETTINGS.Attributes.Acceleration, text)
+	if SETTINGS.Attributes.Enabled then
+		applyAttributes()
+	end
+end)
+createBox(attributesCard, 166, "Strength", SETTINGS.Attributes.Strength, function(text)
+	SETTINGS.Attributes.Strength = numberOr(SETTINGS.Attributes.Strength, text)
+	if SETTINGS.Attributes.Enabled then
+		applyAttributes()
+	end
+end)
+createBox(attributesCard, 228, "Precision", SETTINGS.Attributes.Precision, function(text)
+	SETTINGS.Attributes.Precision = numberOr(SETTINGS.Attributes.Precision, text)
+	if SETTINGS.Attributes.Enabled then
+		applyAttributes()
+	end
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	gui.Enabled = false
+end)
+
+topBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		uiState.dragging = true
+		uiState.dragStart = input.Position
+		uiState.startPos = main.Position
+	end
+end)
+
+topBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		uiState.dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if uiState.dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - uiState.dragStart
+		main.Position = UDim2.new(
+			uiState.startPos.X.Scale,
+			uiState.startPos.X.Offset + delta.X,
+			uiState.startPos.Y.Scale,
+			uiState.startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, typing)
+	if typing then
+		return
+	end
+
+	if uiState.capturingKeybind then
+		if input.KeyCode ~= Enum.KeyCode.Unknown then
+			local button = uiState.capturingKeybind
+			local setter = keybindSetters[button]
+			if setter then
+				setter(input.KeyCode)
+			end
+			button.Text = keyName(input.KeyCode)
+			button.BackgroundColor3 = COLORS.OFF
+			uiState.capturingKeybind = nil
+		end
+		return
+	end
+
+	if input.KeyCode == SETTINGS.UiToggleKey then
+		gui.Enabled = not gui.Enabled
+	elseif input.KeyCode == SETTINGS.Gear.RefillKey then
+		refillGearData()
+	end
+end)
+
+switchPage("Main")
+
+TweenService:Create(glow, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+	ImageTransparency = 0.58,
+}):Play()
