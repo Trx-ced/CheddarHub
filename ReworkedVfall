@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
+Lighting = Lighting or game:GetService("Lighting")
 
 local localPlayer = Players.LocalPlayer
 local _G = getgenv and getgenv() or _G
@@ -33,6 +34,9 @@ local function isActiveRun()
 end
 
 local function trackConnection(connection)
+	if connection then
+		_G[TRANSIENT_CONNECTIONS_KEY][#_G[TRANSIENT_CONNECTIONS_KEY] + 1] = connection
+	end
 	return connection
 end
 
@@ -47,6 +51,8 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	NapeEnabled = false,
 	NapeSize = Vector3.new(20, 20, 20),
 	NapeOffset = Vector3.new(0, 4, 5),
+	NapeMultiplierEnabled = false,
+	NapeMultiplier = 1.25,
 	EyeEnabled = false,
 	EyeSize = Vector3.new(13, 13, 13),
 	EyeOffset = Vector3.new(0, 7, 0),
@@ -83,6 +89,9 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	},
 	NoFallDamageEnabled = false,
 	TemperatureNullifierEnabled = false,
+	NoFogEnabled = false,
+	BrightnessEnabled = false,
+	BrightnessValue = 3,
 	VelocityCapperEnabled = false,
 	ToggleUIKey = Enum.KeyCode.RightShift,
 	DamageMultiplierEnabled = false,
@@ -127,6 +136,9 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"ODMGAttributesEnabled",
 	"NoFallDamageEnabled",
 	"TemperatureNullifierEnabled",
+	"NapeMultiplierEnabled",
+	"NoFogEnabled",
+	"BrightnessEnabled",
 	"VelocityCapperEnabled",
 	"DamageMultiplierEnabled",
 	"NoRecoilEnabled",
@@ -407,8 +419,13 @@ if Config.CheddarPresetVersion ~= 5 then
 end
 
 Config.ToggleUIKey = Config.ToggleUIKey or Enum.KeyCode.RightShift
+Config.NapeMultiplierEnabled = Config.NapeMultiplierEnabled == true
+Config.NapeMultiplier = math.clamp(tonumber(Config.NapeMultiplier) or 1.25, 0.05, 100)
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.TemperatureNullifierEnabled = Config.TemperatureNullifierEnabled == true
+Config.NoFogEnabled = Config.NoFogEnabled == true
+Config.BrightnessEnabled = Config.BrightnessEnabled == true
+Config.BrightnessValue = math.clamp(tonumber(Config.BrightnessValue) or 3, 0, 20)
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
 local DEFAULT_CUSTOM_STATS = {
 	FirearmRange = 500,
@@ -543,8 +560,8 @@ local function applyTitanExpansion(titanModel)
 		return
 	end
 
-	local damagePoints = titanModel:WaitForChild("DamagePoints", 5)
-	local root = titanModel:WaitForChild("HumanoidRootPart", 5) or titanModel:WaitForChild("Head", 5)
+	local damagePoints = titanModel:FindFirstChild("DamagePoints")
+	local root = titanModel:FindFirstChild("HumanoidRootPart") or titanModel:FindFirstChild("Head")
 	if not damagePoints or not root then
 		return
 	end
@@ -555,10 +572,11 @@ local function applyTitanExpansion(titanModel)
 		end
 		local existingWeld = part:FindFirstChild("CheddarHitboxWeld")
 		local state = titanHitboxState[part]
+		local originalSize = state and state.OriginalSize or part.Size
 		if state and state.Root == root and state.Size == size and state.Offset == offset and existingWeld then
 			return
 		end
-		for _, obj in ipairs(part:GetDescendants()) do
+		for _, obj in ipairs(part:GetChildren()) do
 			if obj:IsA("JointInstance") or obj:IsA("Weld") or obj.Name == "CheddarHitboxWeld" then
 				obj:Destroy()
 			end
@@ -575,11 +593,17 @@ local function applyTitanExpansion(titanModel)
 			Root = root,
 			Size = size,
 			Offset = offset,
+			OriginalSize = originalSize,
 		}
 	end
 
 	if Config.NapeEnabled then
-		configurePart(damagePoints:WaitForChild("Nape", 5), Config.NapeSize, Config.NapeOffset)
+		local nape = damagePoints:FindFirstChild("Nape") or damagePoints:FindFirstChild("NapeHB") or titanModel:FindFirstChild("NapeHB", true)
+		if nape then
+			local state = titanHitboxState[nape]
+			local baseSize = state and state.OriginalSize or nape.Size
+			configurePart(nape, Config.NapeMultiplierEnabled and baseSize * Config.NapeMultiplier or Config.NapeSize, Config.NapeOffset)
+		end
 	end
 
 	if Config.EyeEnabled then
@@ -1044,20 +1068,24 @@ local function startNoTalentCooldownLoop()
 	end)
 end
 
-local temperatureNullifier = {
+temperatureNullifier = _G.CheddarTemperatureNullifier or {
 	Installed = false,
+	Installing = false,
+	Hooked = setmetatable({}, { __mode = "k" }),
 }
+_G.CheddarTemperatureNullifier = temperatureNullifier
 
 local function installTemperatureNullifier()
-	if temperatureNullifier.Installed or type(getgc) ~= "function" or type(hookfunction) ~= "function" then
+	if temperatureNullifier.Installed or temperatureNullifier.Installing or type(getgc) ~= "function" or type(hookfunction) ~= "function" then
 		return
 	end
 
+	temperatureNullifier.Installing = true
 	for index, obj in pairs(getgc(true)) do
-		if type(index) == "number" and index % 200 == 0 then
+		if type(index) == "number" and index % 400 == 0 then
 			task.wait()
 		end
-		if type(obj) == "function" and (not islclosure or islclosure(obj)) then
+		if type(obj) == "function" and not temperatureNullifier.Hooked[obj] and (not islclosure or islclosure(obj)) then
 			local okInfo, info = pcall(debug.getinfo, obj)
 			if okInfo and info and (info.name == "UpdateTemperature" or info.name == "UpdateUI") then
 				for i = 1, info.nups or 0 do
@@ -1068,7 +1096,7 @@ local function installTemperatureNullifier()
 				end
 
 				local original = obj
-				pcall(function()
+				local hooked = pcall(function()
 					hookfunction(obj, function(...)
 						if Config.TemperatureNullifierEnabled then
 							return
@@ -1076,11 +1104,26 @@ local function installTemperatureNullifier()
 						return original(...)
 					end)
 				end)
+				if hooked then
+					temperatureNullifier.Hooked[obj] = true
+				end
 			end
 		end
 	end
 
 	temperatureNullifier.Installed = true
+	temperatureNullifier.Installing = false
+end
+
+if IS_MAIN_HUB then
+	trackTransientConnection(localPlayer.CharacterAdded:Connect(function()
+		task.delay(1, function()
+			if Config.TemperatureNullifierEnabled then
+				temperatureNullifier.Installed = false
+				installTemperatureNullifier()
+			end
+		end)
+	end))
 end
 
 local function disableFallDamageLoop()
@@ -1101,9 +1144,128 @@ local function disableFallDamageLoop()
 	return false
 end
 
+lightingOriginals = lightingOriginals or {
+	Captured = false,
+	FogStart = nil,
+	FogEnd = nil,
+	Brightness = nil,
+	Atmospheres = {},
+	Container = nil,
+}
+
+function captureLightingOriginals()
+	if lightingOriginals.Captured then
+		return
+	end
+
+	lightingOriginals.Captured = true
+	lightingOriginals.FogStart = Lighting.FogStart
+	lightingOriginals.FogEnd = Lighting.FogEnd
+	lightingOriginals.Brightness = Lighting.Brightness
+	lightingOriginals.Container = Instance.new("Folder")
+	lightingOriginals.Container.Name = "CheddarHubStoredAtmospheres"
+
+	for _, object in ipairs(Lighting:GetChildren()) do
+		if object:IsA("Atmosphere") then
+			lightingOriginals.Atmospheres[object] = {
+				Density = object.Density,
+				Haze = object.Haze,
+				Glare = object.Glare,
+				Parent = object.Parent,
+			}
+		end
+	end
+end
+
+function restoreFog()
+	if not lightingOriginals.Captured then
+		return
+	end
+
+	Lighting.FogStart = lightingOriginals.FogStart or 0
+	Lighting.FogEnd = lightingOriginals.FogEnd or 100000
+
+	for atmosphere, values in pairs(lightingOriginals.Atmospheres) do
+		if atmosphere and values then
+			if atmosphere.Parent ~= values.Parent then
+				atmosphere.Parent = values.Parent or Lighting
+			end
+			atmosphere.Density = values.Density
+			atmosphere.Haze = values.Haze
+			atmosphere.Glare = values.Glare
+		end
+	end
+
+	if lightingOriginals.Container then
+		for _, atmosphere in ipairs(lightingOriginals.Container:GetChildren()) do
+			if atmosphere:IsA("Atmosphere") and not lightingOriginals.Atmospheres[atmosphere] then
+				atmosphere.Parent = Lighting
+			end
+		end
+	end
+end
+
+function restoreBrightness()
+	if lightingOriginals.Captured and lightingOriginals.Brightness ~= nil then
+		Lighting.Brightness = lightingOriginals.Brightness
+	end
+end
+
+function applyBrightnessLock()
+	if Config.BrightnessEnabled and Lighting.Brightness ~= Config.BrightnessValue then
+		Lighting.Brightness = Config.BrightnessValue
+	end
+end
+
+function applyLightingMods()
+	captureLightingOriginals()
+
+	if Config.NoFogEnabled then
+		Lighting.FogStart = 0
+		Lighting.FogEnd = 1000000000
+		for _, object in ipairs(Lighting:GetChildren()) do
+			if object:IsA("Atmosphere") then
+				if not lightingOriginals.Atmospheres[object] then
+					lightingOriginals.Atmospheres[object] = {
+						Density = object.Density,
+						Haze = object.Haze,
+						Glare = object.Glare,
+						Parent = object.Parent,
+					}
+				end
+				object.Parent = lightingOriginals.Container
+			end
+		end
+	end
+
+	if Config.BrightnessEnabled then
+		applyBrightnessLock()
+	end
+end
+
 if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
+
+lightingRenderStepName = "CheddarHubLighting_" .. HUB_PROFILE
+pcall(function()
+	RunService:UnbindFromRenderStep(lightingRenderStepName)
+end)
+RunService:BindToRenderStep(lightingRenderStepName, Enum.RenderPriority.Last.Value, function()
+	if Config.NoFogEnabled or Config.BrightnessEnabled then
+		applyLightingMods()
+	end
+end)
+trackTransientConnection(Lighting:GetPropertyChangedSignal("Brightness"):Connect(function()
+	applyBrightnessLock()
+end))
+trackTransientConnection({
+	Disconnect = function()
+		pcall(function()
+			RunService:UnbindFromRenderStep(lightingRenderStepName)
+		end)
+	end,
+})
 
 local velocityCapMoverConnections = {}
 local velocityCapCharacter = nil
@@ -2130,21 +2292,22 @@ if IS_MAIN_HUB and Config.AimAssistHookVersion ~= 2 then
 end
 
 local COLORS = {
-	BG = Color3.fromRGB(7, 10, 14),
-	TOP = Color3.fromRGB(11, 16, 24),
-	SIDE = Color3.fromRGB(9, 14, 21),
-	PANEL = Color3.fromRGB(14, 20, 30),
-	PANEL2 = Color3.fromRGB(18, 28, 42),
-	INPUT = Color3.fromRGB(9, 15, 24),
-	STROKE = Color3.fromRGB(35, 122, 200),
-	STROKE_SOFT = Color3.fromRGB(24, 82, 140),
-	TEXT = Color3.fromRGB(238, 245, 255),
-	SUB = Color3.fromRGB(155, 186, 220),
-	ON = Color3.fromRGB(31, 121, 201),
-	OFF = Color3.fromRGB(43, 56, 74),
-	ACCENT = Color3.fromRGB(49, 144, 224),
-	TAB = Color3.fromRGB(16, 23, 34),
-	TAB_ACTIVE = Color3.fromRGB(26, 52, 84),
+	BG = Color3.fromRGB(8, 8, 10),
+	TOP = Color3.fromRGB(12, 12, 15),
+	SIDE = Color3.fromRGB(14, 14, 17),
+	PANEL = Color3.fromRGB(14, 14, 16),
+	PANEL2 = Color3.fromRGB(20, 20, 24),
+	INPUT = Color3.fromRGB(25, 25, 29),
+	STROKE = Color3.fromRGB(115, 77, 255),
+	STROKE_SOFT = Color3.fromRGB(47, 47, 56),
+	TEXT = Color3.fromRGB(245, 245, 250),
+	SUB = Color3.fromRGB(160, 160, 170),
+	ON = Color3.fromRGB(132, 84, 255),
+	OFF = Color3.fromRGB(34, 34, 39),
+	ACCENT = Color3.fromRGB(132, 84, 255),
+	TAB = Color3.fromRGB(16, 16, 19),
+	TAB_ACTIVE = Color3.fromRGB(31, 26, 47),
+	DIVIDER = Color3.fromRGB(29, 29, 35),
 }
 
 local function mk(className, props)
@@ -2208,20 +2371,19 @@ local main = mk("Frame", {
 	Parent = gui,
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromOffset(900, 570),
+	Size = UDim2.fromOffset(980, 620),
 	BackgroundColor3 = COLORS.BG,
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 })
-addCorner(main, 18)
-addStroke(main, COLORS.STROKE, 0.05)
-addGradient(main, COLORS.BG, Color3.fromRGB(8, 15, 25))
+addCorner(main, 14)
+addStroke(main, COLORS.STROKE, 0)
 
-local tint = mk("Frame", {
+mk("Frame", {
 	Parent = main,
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = COLORS.BG,
-	BackgroundTransparency = 0.22,
+	BackgroundTransparency = 0.08,
 	BorderSizePixel = 0,
 	ZIndex = 2,
 })
@@ -2229,17 +2391,27 @@ local tint = mk("Frame", {
 local topBar = mk("Frame", {
 	Name = "TopBar",
 	Parent = main,
-	Size = UDim2.new(1, 0, 0, 60),
+	Size = UDim2.new(1, 0, 0, 64),
 	BackgroundColor3 = COLORS.TOP,
-	BackgroundTransparency = 0.1,
+	BackgroundTransparency = 0,
 	BorderSizePixel = 0,
 	ZIndex = 3,
 })
 
-local title = mk("TextLabel", {
+mk("ImageLabel", {
 	Parent = topBar,
-	Position = UDim2.new(0, 24, 0, 10),
-	Size = UDim2.new(1, -100, 0, 22),
+	Position = UDim2.new(0, 12, 0, 5),
+	Size = UDim2.fromOffset(51, 51),
+	BackgroundTransparency = 1,
+	Image = "rbxthumb://type=Asset&id=78750659030501&w=150&h=150",
+	ScaleType = Enum.ScaleType.Fit,
+	ZIndex = 5,
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 74, 0, 10),
+	Size = UDim2.new(0, 166, 0, 24),
 	BackgroundTransparency = 1,
 	Text = IS_MAIN_HUB and "CheddarCheeseHub | Verfall" or "CheddarCheeseHub Split | Verfall",
 	TextColor3 = COLORS.TEXT,
@@ -2251,8 +2423,8 @@ local title = mk("TextLabel", {
 
 mk("TextLabel", {
 	Parent = topBar,
-	Position = UDim2.new(0, 25, 0, 33),
-	Size = UDim2.new(1, -100, 0, 18),
+	Position = UDim2.new(0, 67, 0, 35),
+	Size = UDim2.new(0, 166, 0, 18),
 	BackgroundTransparency = 1,
 	Text = IS_MAIN_HUB and "Main AOT CC Cheating Hub" or "Utility AOT CC Cheating Hub",
 	TextColor3 = COLORS.SUB,
@@ -2261,6 +2433,25 @@ mk("TextLabel", {
 	TextSize = 11,
 	ZIndex = 4,
 })
+
+searchBox = mk("TextBox", {
+	Name = "Search",
+	Parent = topBar,
+	Position = UDim2.new(0, 250, 0, 12),
+	Size = UDim2.new(1, -330, 0, 40),
+	BackgroundColor3 = COLORS.INPUT,
+	BorderSizePixel = 0,
+	PlaceholderText = "Search",
+	Text = "",
+	TextColor3 = COLORS.TEXT,
+	PlaceholderColor3 = COLORS.SUB,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 14,
+	ZIndex = 5,
+})
+addCorner(searchBox, 8)
+addStroke(searchBox, COLORS.STROKE_SOFT, 0.35)
 
 local closeButton = mk("TextButton", {
 	Name = "Close",
@@ -2282,10 +2473,10 @@ addStroke(closeButton, COLORS.STROKE_SOFT, 0.1)
 local sidebar = mk("Frame", {
 	Name = "Sidebar",
 	Parent = main,
-	Position = UDim2.new(0, 0, 0, 60),
-	Size = UDim2.new(0, 184, 1, -60),
+	Position = UDim2.new(0, 0, 0, 64),
+	Size = UDim2.new(0, 220, 1, -64),
 	BackgroundColor3 = COLORS.SIDE,
-	BackgroundTransparency = 0.12,
+	BackgroundTransparency = 0,
 	BorderSizePixel = 0,
 	ZIndex = 3,
 })
@@ -2295,7 +2486,7 @@ mk("TextLabel", {
 	Position = UDim2.new(0, 18, 0, 18),
 	Size = UDim2.new(1, -36, 0, 18),
 	BackgroundTransparency = 1,
-	Text = "Soon",
+	Text = "Navigation",
 	TextColor3 = COLORS.SUB,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.GothamBold,
@@ -2306,8 +2497,8 @@ mk("TextLabel", {
 local container = mk("Frame", {
 	Name = "Container",
 	Parent = main,
-	Position = UDim2.new(0, 184, 0, 60),
-	Size = UDim2.new(1, -184, 1, -60),
+	Position = UDim2.new(0, 220, 0, 64),
+	Size = UDim2.new(1, -220, 1, -64),
 	BackgroundTransparency = 1,
 	ZIndex = 3,
 })
@@ -2323,6 +2514,9 @@ local state = {
 	StartPosition = nil,
 	DragDelta = Vector3.zero,
 	DragDirty = false,
+	SearchRecords = {},
+	CardRecords = {},
+	ApplyingSearch = false,
 }
 
 local pages = {}
@@ -2354,34 +2548,97 @@ local function createPage(name)
 	return page
 end
 
-local function switchPage(name)
-	for pageName, page in pairs(pages) do
-		page.Visible = pageName == name
-	end
+function setActiveTab(name)
 	for pageName, tab in pairs(tabs) do
 		local active = pageName == name
 		tab.BackgroundColor3 = active and COLORS.TAB_ACTIVE or COLORS.TAB
 		tab.TextColor3 = active and COLORS.TEXT or COLORS.SUB
 	end
+end
+
+local function switchPage(name)
+	searchBox.Text = ""
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == name
+	end
+	for _, record in ipairs(state.SearchRecords) do
+		record.Card.Visible = true
+	end
+	setActiveTab(name)
 	state.Page = name
 end
+
+function appendSearchText(card, text)
+	if not card or not text then
+		return
+	end
+
+	local record = state.CardRecords[card]
+	if not record then
+		return
+	end
+
+	record.SearchText = (record.SearchText .. " " .. tostring(text)):lower()
+end
+
+function applyFeatureSearch()
+	if state.ApplyingSearch then
+		return
+	end
+	state.ApplyingSearch = true
+
+	local query = searchBox.Text:lower():gsub("^%s+", ""):gsub("%s+$", "")
+	if query == "" then
+		for _, record in ipairs(state.SearchRecords) do
+			record.Card.Visible = true
+		end
+		for pageName, page in pairs(pages) do
+			page.Visible = pageName == state.Page
+		end
+		setActiveTab(state.Page)
+		state.ApplyingSearch = false
+		return
+	end
+
+	local firstPageName = nil
+	for _, record in ipairs(state.SearchRecords) do
+		local matched = record.SearchText:find(query, 1, true) ~= nil
+		record.Card.Visible = matched
+		if matched and not firstPageName then
+			firstPageName = record.PageName
+		end
+	end
+
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == firstPageName
+	end
+	if firstPageName then
+		setActiveTab(firstPageName)
+	else
+		setActiveTab(nil)
+	end
+
+	state.ApplyingSearch = false
+end
+
+trackConnection(searchBox:GetPropertyChangedSignal("Text"):Connect(applyFeatureSearch))
 
 local function createTab(name, index)
 	local tab = mk("TextButton", {
 		Parent = sidebar,
-		Position = UDim2.new(0, 12, 0, 52 + (index - 1) * 50),
-		Size = UDim2.new(1, -24, 0, 40),
+		Position = UDim2.new(0, 12, 0, 54 + (index - 1) * 46),
+		Size = UDim2.new(1, -24, 0, 38),
 		BackgroundColor3 = COLORS.TAB,
 		BorderSizePixel = 0,
-		Text = "  " .. string.upper(name),
+		Text = "   " .. name,
 		TextColor3 = COLORS.SUB,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Enum.Font.GothamBold,
-		TextSize = 12,
+		TextSize = 13,
 		AutoButtonColor = false,
 		ZIndex = 4,
 	})
-	addCorner(tab, 10)
+	addCorner(tab, 8)
 	trackConnection(tab.MouseButton1Click:Connect(function()
 		switchPage(name)
 	end))
@@ -2393,13 +2650,21 @@ local function createCard(parent, titleText, height)
 		Parent = parent,
 		Size = UDim2.new(1, -6, 0, height),
 		BackgroundColor3 = COLORS.PANEL,
-		BackgroundTransparency = 0.08,
+		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		ZIndex = 4,
 	})
-	addCorner(card, 15)
-	addStroke(card, COLORS.STROKE_SOFT, 0.18)
+	addCorner(card, 8)
+	addStroke(card, COLORS.STROKE_SOFT, 0.22)
 	addGradient(card, COLORS.PANEL, COLORS.PANEL2)
+	local pageName = parent and parent.Name and parent.Name:gsub("Page$", "") or ""
+	local record = {
+		Card = card,
+		PageName = pageName,
+		SearchText = tostring(titleText):lower(),
+	}
+	state.CardRecords[card] = record
+	state.SearchRecords[#state.SearchRecords + 1] = record
 	mk("TextLabel", {
 		Parent = card,
 		Position = UDim2.new(0, 18, 0, 12),
@@ -2416,6 +2681,7 @@ local function createCard(parent, titleText, height)
 end
 
 local function label(parent, y, text)
+	appendSearchText(parent, text)
 	return mk("TextLabel", {
 		Parent = parent,
 		Position = UDim2.new(0, 18, 0, y),
@@ -2463,7 +2729,7 @@ local function createToggle(parent, y, text, getter, setter)
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
-	addCorner(button, 9)
+	addCorner(button, 14)
 	local function refresh()
 		local ok, enabled = pcall(getter)
 		if not ok then
@@ -2507,8 +2773,8 @@ local function createTextBox(parent, y, text, value, callback)
 		TextSize = 12,
 		ZIndex = 5,
 	})
-	addCorner(box, 9)
-	addStroke(box, COLORS.STROKE_SOFT, 0.18)
+	addCorner(box, 5)
+	addStroke(box, COLORS.STROKE_SOFT, 0.28)
 	trackConnection(box.FocusLost:Connect(function()
 		callback(box.Text, box)
 		SaveConfig()
@@ -2531,8 +2797,8 @@ local function createStatToggleBox(parent, y, statName)
 		TextSize = 12,
 		ZIndex = 5,
 	})
-	addCorner(box, 9)
-	addStroke(box, COLORS.STROKE_SOFT, 0.18)
+	addCorner(box, 5)
+	addStroke(box, COLORS.STROKE_SOFT, 0.28)
 	statValueBoxes[statName] = box
 	trackConnection(box.FocusLost:Connect(function()
 		local value = tonumber(box.Text)
@@ -2557,7 +2823,7 @@ local function createStatToggleBox(parent, y, statName)
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
-	addCorner(button, 9)
+	addCorner(button, 14)
 
 	local function refresh()
 		local enabled = Config.CustomStatsEnabled[statName] == true
@@ -2595,8 +2861,8 @@ local function createKeybind(parent, y, text, getter, setter)
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
-	addCorner(button, 9)
-	addStroke(button, COLORS.STROKE_SOFT, 0.18)
+	addCorner(button, 5)
+	addStroke(button, COLORS.STROKE_SOFT, 0.28)
 	local function refresh()
 		if state.Capturing == button then
 			button.Text = "PRESS A KEY"
@@ -2632,8 +2898,8 @@ local function createButton(parent, y, text, callback)
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
-	addCorner(button, 9)
-	addStroke(button, COLORS.STROKE, 0.18)
+	addCorner(button, 5)
+	addStroke(button, COLORS.STROKE, 0.15)
 	trackConnection(button.MouseButton1Click:Connect(callback))
 	return button
 end
@@ -2670,7 +2936,7 @@ else
 end
 
 if IS_MAIN_HUB then
-local titanCard = createCard(mainPage, "Titan Hitbox Expander", 232)
+local titanCard = createCard(mainPage, "Titan Hitbox Expander", 320)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
 	return Config.NapeEnabled
 end, function(value)
@@ -2679,21 +2945,36 @@ end, function(value)
 		applyAllTitanExpansion()
 	end
 end)
-createTextBox(titanCard, 88, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
+createToggle(titanCard, 88, "Use Nape Multiplier", function()
+	return Config.NapeMultiplierEnabled
+end, function(value)
+	Config.NapeMultiplierEnabled = value
+	if Config.NapeEnabled then
+		applyAllTitanExpansion()
+	end
+end)
+createTextBox(titanCard, 126, "Nape Multiplier", "1.25", function(text, box)
+	Config.NapeMultiplier = math.clamp(tonumber(text) or Config.NapeMultiplier, 0.05, 100)
+	box.Text = tostring(Config.NapeMultiplier)
+	if Config.NapeEnabled and Config.NapeMultiplierEnabled then
+		applyAllTitanExpansion()
+	end
+end)
+createTextBox(titanCard, 164, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
 	Config.NapeSize = parseVector(text, Config.NapeSize)
 	box.Text = string.format("%s,%s,%s", Config.NapeSize.X, Config.NapeSize.Y, Config.NapeSize.Z)
 	if Config.NapeEnabled then
 		applyAllTitanExpansion()
 	end
 end)
-createTextBox(titanCard, 126, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
+createTextBox(titanCard, 202, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
 	Config.NapeOffset = parseVector(text, Config.NapeOffset)
 	box.Text = string.format("%s,%s,%s", Config.NapeOffset.X, Config.NapeOffset.Y, Config.NapeOffset.Z)
 	if Config.NapeEnabled then
 		applyAllTitanExpansion()
 	end
 end)
-createToggle(titanCard, 164, "Enable Eye Extender", function()
+createToggle(titanCard, 240, "Enable Eye Extender", function()
 	return Config.EyeEnabled
 end, function(value)
 	Config.EyeEnabled = value
@@ -2701,7 +2982,7 @@ end, function(value)
 		applyAllTitanExpansion()
 	end
 end)
-createTextBox(titanCard, 202, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
+createTextBox(titanCard, 278, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
 	Config.EyeSize = parseVector(text, Config.EyeSize)
 	box.Text = string.format("%s,%s,%s", Config.EyeSize.X, Config.EyeSize.Y, Config.EyeSize.Z)
 	if Config.EyeEnabled then
@@ -2790,6 +3071,35 @@ end, function(value)
 	end
 end)
 end
+
+local lightingCard = createCard(miscPage, "Lighting", 170)
+createToggle(lightingCard, 50, "NoFog", function()
+	return Config.NoFogEnabled
+end, function(value)
+	Config.NoFogEnabled = value
+	if value then
+		applyLightingMods()
+	else
+		restoreFog()
+	end
+end)
+createToggle(lightingCard, 88, "Brightness", function()
+	return Config.BrightnessEnabled
+end, function(value)
+	Config.BrightnessEnabled = value
+	if value then
+		applyLightingMods()
+	else
+		restoreBrightness()
+	end
+end)
+createTextBox(lightingCard, 126, "Brightness Scale", Config.BrightnessValue, function(text, box)
+	Config.BrightnessValue = math.clamp(tonumber(text) or Config.BrightnessValue, 0, 20)
+	box.Text = tostring(Config.BrightnessValue)
+	if Config.BrightnessEnabled then
+		applyLightingMods()
+	end
+end)
 
 
 if IS_MAIN_HUB then
@@ -3013,6 +3323,10 @@ local function applyConfigEffects()
 		task.spawn(installTemperatureNullifier)
 	end
 
+	if Config.NoFogEnabled or Config.BrightnessEnabled then
+		applyLightingMods()
+	end
+
 
 	if (IS_MAIN_HUB or IS_SPLIT_HUB) and (Config.TitanDummyHitboxEnabled or Config.TitanDummyCountdownEnabled or Config.TitanDummyStatusEnabled or Config.TitanDummyShowEnabled) then
 		updateTitanDummies()
@@ -3089,13 +3403,59 @@ mk("TextLabel", {
 	ZIndex = 5,
 })
 
-local function setWindowOpen(open)
+createButton(createCard(settingsPage, "Unload", 96), 50, "Unload Hub", function()
+	if state.UnloadHub then
+		state.UnloadHub()
+	end
+end)
+
+state.SetWindowOpen = function(open)
 	state.Open = open
 	main.Visible = open
 end
 
+state.UnloadHub = function()
+	_G[RUN_ID_KEY] = (_G[RUN_ID_KEY] or CURRENT_RUN_ID) + 1
+	applyDefaultDisabledConfig()
+	Config.NoFogEnabled = false
+	Config.BrightnessEnabled = false
+	Config.PlayerESPEnabled = false
+	Config.FOVEnabled = false
+	Config.HideFOV = true
+
+	restoreFog()
+	restoreBrightness()
+
+	if setPlayerESPEnabled then
+		pcall(setPlayerESPEnabled, false)
+	end
+
+	if fovCircle then
+		pcall(function()
+			fovCircle.Visible = false
+			if fovCircle.Remove then
+				fovCircle:Remove()
+			elseif fovCircle.Destroy then
+				fovCircle:Destroy()
+			end
+		end)
+	end
+	_G.CheddarHubFOVCircle = nil
+
+	for _, connection in ipairs(_G[TRANSIENT_CONNECTIONS_KEY]) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	_G[TRANSIENT_CONNECTIONS_KEY] = {}
+
+	pcall(function()
+		gui:Destroy()
+	end)
+end
+
 trackConnection(closeButton.MouseButton1Click:Connect(function()
-	setWindowOpen(false)
+	state.SetWindowOpen(false)
 end))
 
 trackConnection(topBar.InputBegan:Connect(function(input)
@@ -3158,7 +3518,7 @@ trackTransientConnection(UserInputService.InputBegan:Connect(function(input, gam
 	end
 
 	if input.KeyCode == Config.ToggleUIKey then
-		setWindowOpen(not state.Open)
+		state.SetWindowOpen(not state.Open)
 	elseif IS_MAIN_HUB and input.KeyCode == Config.PlayerESPKey and setPlayerESPEnabled then
 		setPlayerESPEnabled(not Config.PlayerESPEnabled)
 		refreshConfigControls()
@@ -3167,8 +3527,10 @@ trackTransientConnection(UserInputService.InputBegan:Connect(function(input, gam
 end))
 
 switchPage(IS_MAIN_HUB and "Main" or "Misc")
-setWindowOpen(true)
+state.SetWindowOpen(true)
 if IS_MAIN_HUB then
 	task.spawn(startPlayerESP)
 end
 applyConfigEffects()
+
+
