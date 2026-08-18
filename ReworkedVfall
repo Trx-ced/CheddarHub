@@ -102,6 +102,8 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	FOVEnabled = false,
 	FOVRadius = 150,
 	FOVTransparency = 0.5,
+	FOVLockEnabled = false,
+	FOVLockValue = 70,
 	HideFOV = false,
 	PlayerESPEnabled = false,
 	PlayerESPKey = Enum.KeyCode.L,
@@ -140,6 +142,7 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"NoFogEnabled",
 	"BrightnessEnabled",
 	"VelocityCapperEnabled",
+	"FOVLockEnabled",
 	"DamageMultiplierEnabled",
 	"NoRecoilEnabled",
 	"AimAssistEnabled",
@@ -427,6 +430,8 @@ Config.NoFogEnabled = Config.NoFogEnabled == true
 Config.BrightnessEnabled = Config.BrightnessEnabled == true
 Config.BrightnessValue = math.clamp(tonumber(Config.BrightnessValue) or 3, 0, 20)
 Config.VelocityCapperEnabled = Config.VelocityCapperEnabled == true
+Config.FOVLockEnabled = Config.FOVLockEnabled == true
+Config.FOVLockValue = math.clamp(tonumber(Config.FOVLockValue) or 70, 1, 120)
 local DEFAULT_CUSTOM_STATS = {
 	FirearmRange = 500,
 	GasConservation = 0.5,
@@ -439,100 +444,6 @@ local DEFAULT_CUSTOM_STATS = {
 	VelocityScaling = 1,
 }
 
-local GEAR_STAT_VALUES = {
-	BoostVelocity = 20,
-	HookSpeed = 400,
-	CapVelocity = 90,
-	BoostGasMultiplier = 2,
-	HardVelocityCap = 195,
-	HookRange = 200,
-	GasDrain = 0.035,
-	CapGainMultiplier = 0.78,
-	VeloGain = 0.02,
-	BaseVelocity = 50,
-	ReelSpeed = 10,
-	Durability = 75,
-	SoftVelocityCap = 125,
-	HookVeloGain = 1.35,
-	BoostVeloGainMulti = 1,
-}
-
-local GEAR_STAT_ORDER = {
-	"BoostVelocity",
-	"HookSpeed",
-	"CapVelocity",
-	"BoostGasMultiplier",
-	"HardVelocityCap",
-	"HookRange",
-	"GasDrain",
-	"CapGainMultiplier",
-	"VeloGain",
-	"BaseVelocity",
-	"ReelSpeed",
-	"Durability",
-	"SoftVelocityCap",
-	"HookVeloGain",
-	"BoostVeloGainMulti",
-}
-
-Config.GearStatsEnabled = typeof(Config.GearStatsEnabled) == "table" and Config.GearStatsEnabled or {}
-Config.GearStatValues = typeof(Config.GearStatValues) == "table" and Config.GearStatValues or {}
-for statName in pairs(GEAR_STAT_VALUES) do
-	Config.GearStatsEnabled[statName] = Config.GearStatsEnabled[statName] == true
-	Config.GearStatValues[statName] = tonumber(Config.GearStatValues[statName]) or GEAR_STAT_VALUES[statName]
-end
-
-local generationZeroGear
-local originalGenerationZeroGearStats = {}
-
-local function getGenerationZeroGear()
-	if generationZeroGear then
-		return generationZeroGear
-	end
-
-	local replicatedAssets = ReplicatedStorage:FindFirstChild("ReplicatedAssets")
-	local library = replicatedAssets and replicatedAssets:FindFirstChild("Library")
-	local odmg = library and library:FindFirstChild("Odmg")
-	local gearModule = odmg and odmg:FindFirstChild("Generation 0 Gear")
-	if not gearModule or not gearModule:IsA("ModuleScript") then
-		return nil
-	end
-
-	local ok, gear = pcall(require, gearModule)
-	if ok and typeof(gear) == "table" then
-		generationZeroGear = gear
-		for statName in pairs(GEAR_STAT_VALUES) do
-			if originalGenerationZeroGearStats[statName] == nil and gear[statName] ~= nil then
-				originalGenerationZeroGearStats[statName] = gear[statName]
-			end
-		end
-		return generationZeroGear
-	end
-
-	return nil
-end
-
-local function applyGearMods()
-	local gear = getGenerationZeroGear()
-	if not gear then
-		return
-	end
-
-	for statName, defaultModifiedValue in pairs(GEAR_STAT_VALUES) do
-		if gear[statName] ~= nil then
-			if originalGenerationZeroGearStats[statName] == nil then
-				originalGenerationZeroGearStats[statName] = gear[statName]
-			end
-
-			if Config.GearStatsEnabled[statName] == true then
-				local modifiedValue = tonumber(Config.GearStatValues[statName]) or defaultModifiedValue
-				gear[statName] = modifiedValue
-			else
-				gear[statName] = originalGenerationZeroGearStats[statName]
-			end
-		end
-	end
-end
 local VISIBLE_ATTRIBUTE_STATS = {
 	"FirearmRange",
 	"GasConservation",
@@ -1337,6 +1248,41 @@ function applyLightingMods()
 	end
 end
 
+fovLockState = fovLockState or {
+	Camera = nil,
+	Original = nil,
+}
+
+function restoreFOVLock()
+	if fovLockState.Camera and fovLockState.Original then
+		pcall(function()
+			fovLockState.Camera.FieldOfView = fovLockState.Original
+		end)
+	end
+	fovLockState.Camera = nil
+	fovLockState.Original = nil
+end
+
+function applyFOVLock()
+	if not Config.FOVLockEnabled then
+		restoreFOVLock()
+		return
+	end
+
+	if not workspace.CurrentCamera then
+		return
+	end
+
+	if fovLockState.Camera ~= workspace.CurrentCamera then
+		fovLockState.Camera = workspace.CurrentCamera
+		fovLockState.Original = workspace.CurrentCamera.FieldOfView
+	end
+
+	if workspace.CurrentCamera.FieldOfView ~= Config.FOVLockValue then
+		workspace.CurrentCamera.FieldOfView = Config.FOVLockValue
+	end
+end
+
 if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 	task.spawn(disableFallDamageLoop)
 end
@@ -1349,6 +1295,7 @@ RunService:BindToRenderStep(lightingRenderStepName, Enum.RenderPriority.Last.Val
 	if Config.NoFogEnabled or Config.BrightnessEnabled then
 		applyLightingMods()
 	end
+	applyFOVLock()
 end)
 trackTransientConnection(Lighting:GetPropertyChangedSignal("Brightness"):Connect(function()
 	applyBrightnessLock()
@@ -2792,7 +2739,6 @@ end
 
 local configRefreshers = {}
 local statValueBoxes = {}
-local gearValueBoxes = {}
 
 local function refreshConfigControls()
 	for _, refresh in ipairs(configRefreshers) do
@@ -2805,12 +2751,6 @@ syncConfigInputs = function()
 		local value = tonumber(box.Text)
 		if value then
 			Config.CustomStats[statName] = value
-		end
-	end
-	for statName, box in pairs(gearValueBoxes) do
-		local value = tonumber(box.Text)
-		if value then
-			Config.GearStatValues[statName] = value
 		end
 	end
 end
@@ -2881,84 +2821,6 @@ local function createTextBox(parent, y, text, value, callback)
 		SaveConfig()
 	end))
 	return box
-end
-
-local function createGearStatRow(parent, y, statName)
-	appendSearchText(parent, statName)
-	mk("TextLabel", {
-		Parent = parent,
-		Position = UDim2.new(0, 18, 0, y),
-		Size = UDim2.new(1, -230, 0, 30),
-		BackgroundTransparency = 1,
-		Text = statName,
-		TextColor3 = COLORS.SUB,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Font = Enum.Font.Gotham,
-		TextSize = 12,
-		ZIndex = 5,
-	})
-
-	local box = mk("TextBox", {
-		Parent = parent,
-		Position = UDim2.new(1, -202, 0, y + 2),
-		Size = UDim2.fromOffset(96, 28),
-		BackgroundColor3 = COLORS.INPUT,
-		BorderSizePixel = 0,
-		Text = tostring(Config.GearStatValues[statName] or GEAR_STAT_VALUES[statName]),
-		TextColor3 = COLORS.TEXT,
-		ClearTextOnFocus = false,
-		Font = Enum.Font.GothamSemibold,
-		TextSize = 12,
-		ZIndex = 5,
-	})
-	addCorner(box, 5)
-	addStroke(box, COLORS.STROKE_SOFT, 0.28)
-	gearValueBoxes[statName] = box
-
-	local button = mk("TextButton", {
-		Parent = parent,
-		Position = UDim2.new(1, -94, 0, y + 2),
-		Size = UDim2.fromOffset(72, 27),
-		BackgroundColor3 = COLORS.OFF,
-		BorderSizePixel = 0,
-		Text = "",
-		TextColor3 = COLORS.TEXT,
-		Font = Enum.Font.GothamBold,
-		TextSize = 12,
-		AutoButtonColor = false,
-		ZIndex = 5,
-	})
-	addCorner(button, 14)
-
-	local function refresh()
-		local enabled = Config.GearStatsEnabled[statName] == true
-		button.Text = enabled and "ON" or "OFF"
-		box.Text = tostring(Config.GearStatValues[statName] or GEAR_STAT_VALUES[statName])
-		TweenService:Create(button, TweenInfo.new(0.14), {
-			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
-		}):Play()
-	end
-
-	trackConnection(box.FocusLost:Connect(function()
-		local value = tonumber(box.Text)
-		if value then
-			Config.GearStatValues[statName] = value
-		end
-		box.Text = tostring(Config.GearStatValues[statName] or GEAR_STAT_VALUES[statName])
-		applyGearMods()
-		SaveConfig()
-	end))
-
-	trackConnection(button.MouseButton1Click:Connect(function()
-		Config.GearStatsEnabled[statName] = Config.GearStatsEnabled[statName] ~= true
-		applyGearMods()
-		SaveConfig()
-		refresh()
-	end))
-
-	refresh()
-	table.insert(configRefreshers, refresh)
-	return refresh
 end
 
 local function createStatToggleBox(parent, y, statName)
@@ -3092,7 +2954,6 @@ if IS_MAIN_HUB then
 	createPage("Firearms")
 end
 local visualPage = IS_MAIN_HUB and createPage("Visual") or nil
-local gearPage = IS_MAIN_HUB and createPage("Gear") or nil
 local otherPage = createPage("Other")
 local practicalPage = createPage("Practical")
 local overpoweredPage = IS_MAIN_HUB and createPage("Overpowered") or nil
@@ -3104,11 +2965,10 @@ if IS_MAIN_HUB then
 	createTab("Misc", 3)
 	createTab("Firearms", 4)
 	createTab("Visual", 5)
-	createTab("Gear", 6)
-	createTab("Other", 7)
-	createTab("Practical", 8)
-	createTab("Overpowered", 9)
-	createTab("Settings", 10)
+	createTab("Other", 6)
+	createTab("Practical", 7)
+	createTab("Overpowered", 8)
+	createTab("Settings", 9)
 else
 	createTab("Misc", 1)
 	createTab("Other", 2)
@@ -3228,10 +3088,6 @@ for index, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
 	Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
 	createStatToggleBox(statCard, 42 + index * 36, statName)
 end
-local gearCard = createCard(gearPage, "Generation 0 Gear", 72 + 42 * #GEAR_STAT_ORDER)
-for index, statName in ipairs(GEAR_STAT_ORDER) do
-	createGearStatRow(gearCard, 48 + (index - 1) * 42, statName)
-end
 
 
 local safetyCard = createCard(miscPage, "Fall Damage", 94)
@@ -3284,6 +3140,23 @@ createTextBox(lightingCard, 126, "Brightness Scale", Config.BrightnessValue, fun
 	if Config.BrightnessEnabled then
 		applyLightingMods()
 	end
+end)
+
+local fovLockerCard = createCard(miscPage, "FOV Locker", 132)
+createToggle(fovLockerCard, 50, "Lock Camera FOV", function()
+	return Config.FOVLockEnabled
+end, function(value)
+	Config.FOVLockEnabled = value
+	if value then
+		applyFOVLock()
+	else
+		restoreFOVLock()
+	end
+end)
+createTextBox(fovLockerCard, 88, "FOV Value", Config.FOVLockValue, function(text, box)
+	Config.FOVLockValue = math.clamp(tonumber(text) or Config.FOVLockValue, 1, 120)
+	box.Text = tostring(Config.FOVLockValue)
+	applyFOVLock()
 end)
 
 
@@ -3500,10 +3373,6 @@ local function applyConfigEffects()
 		applyCustomStats()
 	end
 
-	if IS_MAIN_HUB then
-		applyGearMods()
-	end
-
 	if IS_MAIN_HUB and Config.NoFallDamageEnabled then
 		task.spawn(disableFallDamageLoop)
 	end
@@ -3608,17 +3477,14 @@ state.UnloadHub = function()
 	applyDefaultDisabledConfig()
 	Config.NoFogEnabled = false
 	Config.BrightnessEnabled = false
+	Config.FOVLockEnabled = false
 	Config.PlayerESPEnabled = false
 	Config.FOVEnabled = false
 	Config.HideFOV = true
-	Config.GearStatsEnabled = {}
-	for statName in pairs(GEAR_STAT_VALUES) do
-		Config.GearStatsEnabled[statName] = false
-	end
-	applyGearMods()
 
 	restoreFog()
 	restoreBrightness()
+	restoreFOVLock()
 
 	if setPlayerESPEnabled then
 		pcall(setPlayerESPEnabled, false)
