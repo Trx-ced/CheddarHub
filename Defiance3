@@ -55,10 +55,10 @@ local State = {
 	NoFogEnabled = false,
 	ToggleKeybind = Enum.KeyCode.LeftAlt,
 	GearConfigEnabled = false,
-	HitMultiEnabled = false,
-	HitMultiValue = 4,
-	BladeReductionEnabled = false,
-	BladeReductionValue = 0.3,
+	HitMultiEnabled = true,
+	HitMultiValue = 2,
+	BladeReductionEnabled = true,
+	BladeReductionValue = 0.2,
 }
 
 local Connections = {}
