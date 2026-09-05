@@ -1,0 +1,3507 @@
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+
+local player = Players.LocalPlayer
+
+local TitansFolder = workspace:WaitForChild("TitanLive")
+local TemplateRig = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("TitanModels"):WaitForChild("TheFirstAbnormalTitan")
+
+local SpawnablesFolder = workspace:WaitForChild("Spawnables")
+local SpawnablesSpawnedFolder = SpawnablesFolder:FindFirstChild("Spawned")
+local LiveFolder = workspace:FindFirstChild("Live")
+
+local State = {
+	NapeEnabled = true,
+	NapeMult = 2,
+	NapeUseXYZ = false,
+	NapeScaleX = 1,
+	NapeScaleY = 1,
+	NapeScaleZ = 1,
+	DisableGrabHitboxes = false,
+
+	TitanESP = false,
+	TitanESPBoxTransparency = 1,
+
+	RefillESP = false,
+
+	PlayerESP = false,
+	PlayerESPTransparency = 0,
+	PlayerHeadExpandEnabled = false,
+	PlayerHeadMult = 5,
+	PlayerTorsoExpandEnabled = false,
+	PlayerTorsoMult = 3,
+	PlayerNoTouch = false,
+
+	TitanEyesEnabled = true,
+	TitanEyesMult = 1.45,
+
+
+	V7Enabled = false,
+	V7Value = 10,
+	HandcutDisableEnabled = false,
+	HandcutDeleteEnabled = false,
+	GiveHandcutEnabled = false,
+
+	HookRangeExtenderEnabled = true,
+	HookRangeValue = 1200,
+	TitanNullifierEnabled = true,
+	AntiGrabV3Enabled = false,
+	HorseStaminaEnabled = false,
+	NoFogEnabled = false,
+	ToggleKeybind = Enum.KeyCode.LeftAlt,
+	GearConfigEnabled = false,
+	HitMultiEnabled = false,
+	HitMultiValue = 4,
+	BladeReductionEnabled = false,
+	BladeReductionValue = 0.3,
+}
+
+local Connections = {}
+local function track(conn)
+	table.insert(Connections, conn)
+	return conn
+end
+
+local unloaded = false
+local function safeDisconnectAll()
+	for _, c in ipairs(Connections) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+	table.clear(Connections)
+end
+
+local AntiGrabTargets = {
+	Head = true,
+	LeftHand = true,
+	LeftLowerArm = true,
+	LeftUpperArm = true,
+	RightHand = true,
+	RightLowerArm = true,
+	RightUpperArm = true,
+	UpperTorso = true,
+	UpperJaw = true,
+	LowerJaw = true,
+	UpperTeeth = true,
+	NeckBone = true
+}
+
+local function isAntiGrabTarget(part)
+	if not (part and part:IsA("BasePart")) then return false end
+	local n = part.Name
+	if AntiGrabTargets[n] then return true end
+	if string.find(n, "Hand", 1, true) then return true end
+	if string.find(n, "LowerArm", 1, true) then return true end
+	if string.find(n, "UpperArm", 1, true) then return true end
+	if n == "LeftArm" or n == "RightArm" then return true end
+	return false
+end
+
+local function storeBasePartState(part)
+	if not part or not part:IsA("BasePart") then return end
+	if part:GetAttribute("HB_Stored") then return end
+	part:SetAttribute("HB_Stored", true)
+
+	part:SetAttribute("HB_OrigSizeX", part.Size.X)
+	part:SetAttribute("HB_OrigSizeY", part.Size.Y)
+	part:SetAttribute("HB_OrigSizeZ", part.Size.Z)
+
+	part:SetAttribute("HB_OrigCanCollide", part.CanCollide and 1 or 0)
+	part:SetAttribute("HB_OrigCanTouch", part.CanTouch and 1 or 0)
+	part:SetAttribute("HB_OrigCanQuery", part.CanQuery and 1 or 0)
+	part:SetAttribute("HB_OrigMassless", part.Massless and 1 or 0)
+
+	local mesh = part:FindFirstChildWhichIsA("SpecialMesh")
+	if mesh then
+		part:SetAttribute("HB_HasMesh", 1)
+		part:SetAttribute("HB_OrigMeshX", mesh.Scale.X)
+		part:SetAttribute("HB_OrigMeshY", mesh.Scale.Y)
+		part:SetAttribute("HB_OrigMeshZ", mesh.Scale.Z)
+	else
+		part:SetAttribute("HB_HasMesh", 0)
+	end
+end
+
+local function restoreBasePartState(part)
+	if not part or not part:IsA("BasePart") then return end
+	if not part:GetAttribute("HB_Stored") then return end
+
+	local sx = part:GetAttribute("HB_OrigSizeX")
+	local sy = part:GetAttribute("HB_OrigSizeY")
+	local sz = part:GetAttribute("HB_OrigSizeZ")
+	if sx and sy and sz then
+		part.Size = Vector3.new(sx, sy, sz)
+	end
+
+	part.CanCollide = (part:GetAttribute("HB_OrigCanCollide") == 1)
+	part.CanTouch = (part:GetAttribute("HB_OrigCanTouch") == 1)
+	part.CanQuery = (part:GetAttribute("HB_OrigCanQuery") == 1)
+	part.Massless = (part:GetAttribute("HB_OrigMassless") == 1)
+
+	if part:GetAttribute("HB_HasMesh") == 1 then
+		local mesh = part:FindFirstChildWhichIsA("SpecialMesh")
+		if mesh then
+			local mx = part:GetAttribute("HB_OrigMeshX")
+			local my = part:GetAttribute("HB_OrigMeshY")
+			local mz = part:GetAttribute("HB_OrigMeshZ")
+			if mx and my and mz then
+				mesh.Scale = Vector3.new(mx, my, mz)
+			end
+		end
+	end
+end
+
+local function resolveLocalModel()
+	if player.Character and player.Character.Parent then
+		return player.Character
+	end
+	if LiveFolder then
+		local m = LiveFolder:FindFirstChild(player.Name)
+		if m and m:IsA("Model") then
+			return m
+		end
+	end
+	return nil
+end
+
+local function isNoTouchTarget(part)
+	if not (part and part:IsA("BasePart")) then return false end
+	local n = part.Name
+	if n == "Head" then return true end
+	if n == (player.Name .. "Head") then return true end
+	if string.find(n, "Torso", 1, true) then return true end
+	if string.find(n, "Arm", 1, true) then return true end
+	if string.find(n, "Leg", 1, true) then return true end
+	return false
+end
+
+local function restoreCanTouchOnly(part)
+	if not (part and part:IsA("BasePart")) then return end
+	local v = part:GetAttribute("HB_OrigCanTouch")
+	if v == nil then return end
+	part.CanTouch = (v == 1)
+end
+
+local function applyPlayerNoTouch()
+	local model = resolveLocalModel()
+	if not model then return end
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and isNoTouchTarget(d) then
+			storeBasePartState(d)
+			d.CanTouch = false
+		end
+	end
+end
+
+local function restorePlayerNoTouch()
+	local model = resolveLocalModel()
+	if not model then return end
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") and isNoTouchTarget(d) then
+			restoreCanTouchOnly(d)
+		end
+	end
+end
+
+local function fixNapePhysics(p)
+	p.CanCollide = false
+	p.CanTouch = true
+	p.CanQuery = true
+	p.Massless = true
+	p.Anchored = false
+	p.AssemblyLinearVelocity = Vector3.zero
+	p.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function gatherNapeParts(rig)
+	local list = {}
+	if not rig then return list end
+
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("BasePart") and string.find(d.Name, "Nape", 1, true) then
+			list[#list + 1] = d
+		end
+	end
+
+	local serverHB = rig:FindFirstChild("ServerHB", true)
+	if serverHB then
+		for _, d in ipairs(serverHB:GetDescendants()) do
+			if d:IsA("BasePart") and string.find(d.Name, "Nape", 1, true) then
+				list[#list + 1] = d
+			end
+		end
+	end
+
+	return list
+end
+
+local function findNape(rig)
+	local napes = gatherNapeParts(rig)
+	return napes[1]
+end
+
+local function applyNapeToRig(rig)
+	if not (rig and rig:IsA("Model")) then return end
+
+	local napes = gatherNapeParts(rig)
+	if #napes == 0 then return end
+
+	for i = 1, #napes do
+		local nape = napes[i]
+		if nape and nape.Parent then
+			storeBasePartState(nape)
+			if State.NapeEnabled then
+				local ox = nape:GetAttribute("HB_OrigSizeX")
+				local oy = nape:GetAttribute("HB_OrigSizeY")
+				local oz = nape:GetAttribute("HB_OrigSizeZ")
+				if ox and oy and oz then
+					if State.NapeUseXYZ then
+						nape.Size = Vector3.new(
+							ox * math.clamp(State.NapeScaleX, 0.05, 30000),
+							oy * math.clamp(State.NapeScaleY, 0.05, 30000),
+							oz * math.clamp(State.NapeScaleZ, 0.05, 30000)
+						)
+					else
+						nape.Size = Vector3.new(ox, oy, oz) * math.clamp(State.NapeMult, 1, 30000)
+					end
+				end
+				fixNapePhysics(nape)
+			else
+				restoreBasePartState(nape)
+			end
+		end
+	end
+end
+
+local function applyDisableGrabHitboxesToRig(rig)
+	if not (rig and rig:IsA("Model")) then return end
+	if not State.DisableGrabHitboxes then return end
+
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("BasePart") and isAntiGrabTarget(d) then
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+		end
+	end
+end
+
+local function gatherEyeParts(rig)
+	local list = {}
+	if not (rig and rig:IsA("Model")) then return list end
+
+	local direct = rig:FindFirstChild("Eyes", true)
+	if direct and direct:IsA("BasePart") then
+		list[#list + 1] = direct
+		return list
+	end
+
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("BasePart") then
+			if d.Name == "Eyes" or string.find(d.Name, "Eye", 1, true) then
+				list[#list + 1] = d
+			end
+		end
+	end
+
+	return list
+end
+
+local function applyEyesToRig(rig)
+	if not (rig and rig:IsA("Model")) then return end
+	local parts = gatherEyeParts(rig)
+	if #parts == 0 then return end
+
+	for i = 1, #parts do
+		local p = parts[i]
+		if p and p.Parent then
+			storeBasePartState(p)
+			if State.TitanEyesEnabled then
+				local ox = p:GetAttribute("HB_OrigSizeX")
+				local oy = p:GetAttribute("HB_OrigSizeY")
+				local oz = p:GetAttribute("HB_OrigSizeZ")
+				if ox and oy and oz then
+					p.Size = Vector3.new(ox, oy, oz) * math.clamp(State.TitanEyesMult, 1, 80)
+				end
+				p.CanCollide = false
+				p.CanTouch = true
+				p.CanQuery = true
+				p.Massless = true
+				p.Anchored = false
+			else
+				restoreBasePartState(p)
+			end
+		end
+	end
+end
+
+local function patchRig(rig)
+	applyNapeToRig(rig)
+	applyDisableGrabHitboxesToRig(rig)
+	applyEyesToRig(rig)
+end
+
+local function patchAllTitans()
+	patchRig(TemplateRig)
+	for _, rig in ipairs(TitansFolder:GetChildren()) do
+		if rig:IsA("Model") then
+			patchRig(rig)
+		end
+	end
+end
+
+local espAttachTitan
+local espApplyTitanTransparency
+
+patchAllTitans()
+
+track(TitansFolder.ChildAdded:Connect(function(rig)
+	task.wait(0.15)
+	if rig and rig:IsA("Model") then
+		patchRig(rig)
+		if State.TitanESP then
+			espAttachTitan(rig)
+			espApplyTitanTransparency()
+		end
+		task.delay(0.75, function()
+			if rig and rig.Parent then
+				patchRig(rig)
+				if State.TitanESP then
+					espAttachTitan(rig)
+					espApplyTitanTransparency()
+				end
+			end
+		end)
+	end
+end))
+
+task.spawn(function()
+	while not unloaded do
+		if State.DisableGrabHitboxes then
+			for _, d in ipairs(TitansFolder:GetDescendants()) do
+				if d:IsA("BasePart") and isAntiGrabTarget(d) then
+					d.CanCollide = false
+					d.CanTouch = false
+					d.CanQuery = false
+				end
+			end
+
+			local live = workspace:FindFirstChild("Live")
+			if live then
+				local plr = live:FindFirstChild(player.Name)
+				if plr then
+					local hrp = plr:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						hrp.CanTouch = false
+					end
+				end
+			end
+
+			local char = player.Character
+			if char then
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("BasePart") then
+						d.CanCollide = false
+						d.CanTouch = false
+						d.CanQuery = false
+					end
+				end
+			end
+		end
+
+		if State.PlayerNoTouch then
+			applyPlayerNoTouch()
+		end
+
+		task.wait(0.2)
+	end
+end)
+
+local function getRoot()
+	local char = player.Character
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getTitanType(rig)
+	local attr = rig:GetAttribute("TitanType")
+	if typeof(attr) == "string" and attr ~= "" then
+		return attr
+	end
+	return rig.Name
+end
+
+local debugByNape = {}
+local titanEspWatch = {}
+
+local function makeTitanBox(nape)
+	local box = Instance.new("SelectionBox")
+	box.Name = "TitanESP_Box"
+	box.Adornee = nape
+	box.LineThickness = 0.05
+	box.Color3 = Color3.fromRGB(255, 0, 0)
+	local t = math.clamp(State.TitanESPBoxTransparency, 0, 1)
+	box.Transparency = t
+	box.SurfaceTransparency = t
+	box.Parent = nape
+	return box
+end
+
+local function makeTitanText(nape)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "TitanESP_Info"
+	bb.Adornee = nape
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(240, 36)
+	bb.StudsOffset = Vector3.new(0, 3.1, 0)
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeTransparency = 0.35
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 16
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Text = ""
+	label.Parent = bb
+
+	bb.Parent = nape
+	return bb, label
+end
+
+espAttachTitan = function(rig)
+	if not rig:IsA("Model") then return end
+	local nape = findNape(rig)
+	if not nape then
+		if not titanEspWatch[rig] then
+			titanEspWatch[rig] = track(rig.DescendantAdded:Connect(function(desc)
+				if State.TitanESP and desc:IsA("BasePart") and string.find(desc.Name, "Nape", 1, true) then
+					espAttachTitan(rig)
+				end
+			end))
+		end
+		return
+	end
+	if debugByNape[nape] then return end
+
+	if titanEspWatch[rig] then
+		titanEspWatch[rig]:Disconnect()
+		titanEspWatch[rig] = nil
+	end
+
+	local box = makeTitanBox(nape)
+	local bb, label = makeTitanText(nape)
+	debugByNape[nape] = { box = box, bb = bb, label = label, rig = rig }
+
+	track(nape.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			local info = debugByNape[nape]
+			if info then
+				if info.box then info.box:Destroy() end
+				if info.bb then info.bb:Destroy() end
+			end
+			debugByNape[nape] = nil
+		end
+	end))
+end
+
+local function espDetachAllTitans()
+	for nape, info in pairs(debugByNape) do
+		if info.box then info.box:Destroy() end
+		if info.bb then info.bb:Destroy() end
+		debugByNape[nape] = nil
+	end
+	for rig, conn in pairs(titanEspWatch) do
+		pcall(function()
+			conn:Disconnect()
+		end)
+		titanEspWatch[rig] = nil
+	end
+end
+
+espApplyTitanTransparency = function()
+	local t = math.clamp(State.TitanESPBoxTransparency, 0, 1)
+	for _, info in pairs(debugByNape) do
+		if info and info.box then
+			info.box.Transparency = t
+			info.box.SurfaceTransparency = t
+		end
+	end
+end
+
+track(RunService.RenderStepped:Connect(function()
+	if not State.TitanESP then return end
+	local hrp = getRoot()
+	if not hrp then return end
+	for nape, info in pairs(debugByNape) do
+		if not (nape and nape.Parent and info and info.label and info.rig) then
+			debugByNape[nape] = nil
+		else
+			local dist = (hrp.Position - nape.Position).Magnitude
+			local ttype = getTitanType(info.rig)
+			info.label.Text = string.format("%s  |  %.1f studs", ttype, dist)
+		end
+	end
+end))
+
+local refillByAdornee = {}
+
+local function getModelAnyPart(m)
+	if not (m and m:IsA("Model")) then return nil end
+	local pp = m.PrimaryPart
+	if pp and pp:IsA("BasePart") then return pp end
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") then
+			return d
+		end
+	end
+	return nil
+end
+
+local function makeRefillBillboard(adornee)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "RefillESP_Info"
+	bb.Adornee = adornee
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(260, 34)
+	bb.StudsOffset = Vector3.new(0, 2.8, 0)
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Info"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeTransparency = 0.35
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Text = ""
+	label.Parent = bb
+
+	bb.Parent = adornee
+	return bb, label
+end
+
+local function attachRefillESP(model)
+	if not (model and model:IsA("Model")) then return end
+	local part = getModelAnyPart(model)
+	if not part then return end
+	if refillByAdornee[part] then return end
+
+	local bb, label = makeRefillBillboard(part)
+	refillByAdornee[part] = { bb = bb, label = label, model = model, part = part }
+
+	track(part.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			local info = refillByAdornee[part]
+			if info then
+				if info.bb then info.bb:Destroy() end
+			end
+			refillByAdornee[part] = nil
+		end
+	end))
+
+	track(model.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			local info = refillByAdornee[part]
+			if info then
+				if info.bb then info.bb:Destroy() end
+			end
+			refillByAdornee[part] = nil
+		end
+	end))
+end
+
+local function detachAllRefillESP()
+	for _, info in pairs(refillByAdornee) do
+		if info.bb then info.bb:Destroy() end
+	end
+	table.clear(refillByAdornee)
+end
+
+local function hookSpawnablesFolder(folder)
+	if not folder then return end
+	for _, ch in ipairs(folder:GetChildren()) do
+		if ch:IsA("Model") and State.RefillESP then
+			attachRefillESP(ch)
+		end
+	end
+	track(folder.ChildAdded:Connect(function(ch)
+		task.wait(0.05)
+		if State.RefillESP and ch:IsA("Model") then
+			attachRefillESP(ch)
+		end
+	end))
+	track(folder.ChildRemoved:Connect(function(ch)
+		if not ch then return end
+		if not ch:IsA("Model") then return end
+		for part, info in pairs(refillByAdornee) do
+			if info and info.model == ch then
+				if info.bb then info.bb:Destroy() end
+				refillByAdornee[part] = nil
+			end
+		end
+	end))
+end
+
+hookSpawnablesFolder(SpawnablesFolder)
+hookSpawnablesFolder(SpawnablesSpawnedFolder)
+
+track(RunService.RenderStepped:Connect(function()
+	if not State.RefillESP then return end
+	local hrp = getRoot()
+	if not hrp then return end
+	for part, info in pairs(refillByAdornee) do
+		if not (part and part.Parent and info and info.label and info.model and info.model.Parent) then
+			if info and info.bb then info.bb:Destroy() end
+			refillByAdornee[part] = nil
+		else
+			local dist = (hrp.Position - part.Position).Magnitude
+			info.label.Text = string.format("%s  |  %.1f studs", info.model.Name, dist)
+		end
+	end
+end))
+
+local activeESPs = {}
+local pendingESPs = {}
+local playerEspWatch = {}
+
+local function destroyESP(model)
+	local info = activeESPs[model]
+	if not info then return end
+	pendingESPs[model] = nil
+	if info.Connection then
+		pcall(function()
+			info.Connection:Disconnect()
+		end)
+	end
+	if info.Billboard then
+		pcall(function()
+			info.Billboard:Destroy()
+		end)
+	end
+	if playerEspWatch[model] then
+		pcall(function()
+			playerEspWatch[model]:Disconnect()
+		end)
+		playerEspWatch[model] = nil
+	end
+	activeESPs[model] = nil
+end
+
+local function setupESP(model)
+	if not State.PlayerESP then return end
+	if not (model and model:IsA("Model")) then return end
+	if activeESPs[model] or pendingESPs[model] then return end
+
+	pendingESPs[model] = true
+
+	local head = model:FindFirstChild("Head")
+	local humanoid = model:FindFirstChild("Humanoid")
+	local rootPart = model:FindFirstChild("HumanoidRootPart")
+	if not head or not humanoid or not rootPart then
+		pendingESPs[model] = nil
+		if not playerEspWatch[model] then
+			playerEspWatch[model] = track(model.ChildAdded:Connect(function()
+				if State.PlayerESP and not unloaded then
+					setupESP(model)
+				end
+			end))
+		end
+		return
+	end
+
+	if playerEspWatch[model] then
+		playerEspWatch[model]:Disconnect()
+		playerEspWatch[model] = nil
+	end
+
+	local oldBillboard = head:FindFirstChild("LiveESP")
+	if oldBillboard then
+		oldBillboard:Destroy()
+	end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "LiveESP"
+	billboard.Adornee = head
+	billboard.Size = UDim2.new(0, 200, 0, 60)
+	billboard.StudsOffset = Vector3.new(0, 3, 0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 5000
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLabel.TextStrokeTransparency = 0
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textLabel.Font = Enum.Font.SourceSansBold
+	textLabel.TextSize = 15
+	textLabel.Parent = billboard
+
+	billboard.Parent = head
+
+	activeESPs[model] = {
+		Billboard = billboard,
+		Label = textLabel,
+		Humanoid = humanoid,
+		RootPart = rootPart
+	}
+	pendingESPs[model] = nil
+end
+
+local function detachAllPlayerESP()
+	for model in pairs(activeESPs) do
+		destroyESP(model)
+	end
+	for model, conn in pairs(playerEspWatch) do
+		pcall(function()
+			conn:Disconnect()
+		end)
+		playerEspWatch[model] = nil
+	end
+	table.clear(pendingESPs)
+end
+
+local function refreshAllPlayerESP()
+	if not State.PlayerESP then
+		detachAllPlayerESP()
+		return
+	end
+	if not LiveFolder then return end
+	task.spawn(function()
+		local done = 0
+		for _, child in ipairs(LiveFolder:GetChildren()) do
+			if not State.PlayerESP or unloaded then break end
+			if child:IsA("Model") then
+				setupESP(child)
+				done += 1
+				if done % 12 == 0 then
+					task.wait()
+				end
+			end
+		end
+	end)
+end
+
+if LiveFolder then
+	track(LiveFolder.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			task.defer(function()
+				if not unloaded and State.PlayerESP then
+					setupESP(child)
+				end
+			end)
+			task.delay(0.4, function()
+				if not unloaded and State.PlayerESP then
+					setupESP(child)
+				end
+			end)
+		end
+	end))
+
+	track(LiveFolder.ChildRemoved:Connect(function(child)
+		if child:IsA("Model") then
+			destroyESP(child)
+		end
+	end))
+end
+
+track(RunService.RenderStepped:Connect(function()
+	if not State.PlayerESP then return end
+	local camera = Workspace.CurrentCamera
+	for model, info in pairs(activeESPs) do
+		local humanoid = info.Humanoid
+		local rootPart = info.RootPart
+		local billboard = info.Billboard
+		local label = info.Label
+		if not model:IsDescendantOf(Workspace) or not humanoid or humanoid.Health <= 0 or not rootPart or not billboard or not billboard.Parent then
+			destroyESP(model)
+		else
+			local distance = 0
+			if camera then
+				distance = (camera.CFrame.Position - rootPart.Position).Magnitude
+			end
+			label.Text = string.format(
+				"Name: %s\nHealth: %d/%d\nDistance: %d studs",
+				model.Name,
+				math.max(0, math.floor(humanoid.Health)),
+				math.floor(humanoid.MaxHealth),
+				math.floor(distance)
+			)
+		end
+	end
+end))
+
+local SafeFall = {}
+function SafeFall.Setup()
+end
+function SafeFall.Disconnect()
+end
+
+track(player.CharacterAdded:Connect(function(char)
+	if unloaded then return end
+	SafeFall.Setup(char)
+	task.delay(0.1, function()
+		if unloaded then return end
+		if State.PlayerNoTouch then
+			applyPlayerNoTouch()
+		end
+	end)
+	task.delay(0.5, function()
+		if unloaded then return end
+		applyPlayerExpandAll()
+		refreshAllPlayerESP()
+	end)
+end))
+if player.Character then
+	SafeFall.Setup(player.Character)
+end
+
+local Lighting = game:GetService("Lighting")
+local NoFogRuntime = { Started = false, Connections = {} }
+
+local function clearFog()
+	Lighting.FogEnd = 100000
+	Lighting.FogStart = 0
+
+	for _, child in ipairs(Lighting:GetChildren()) do
+		if child:IsA("Atmosphere") then
+			child.Density = 0
+		end
+	end
+end
+
+function NoFogRuntime.Start()
+	clearFog()
+	if NoFogRuntime.Started then return end
+	NoFogRuntime.Started = true
+
+	table.insert(NoFogRuntime.Connections, Lighting.ChildAdded:Connect(function(child)
+		if child:IsA("Atmosphere") then
+			child.Density = 0
+		end
+	end))
+
+	table.insert(NoFogRuntime.Connections, Lighting:GetPropertyChangedSignal("FogEnd"):Connect(function()
+		if Lighting.FogEnd ~= 100000 then
+			Lighting.FogEnd = 100000
+		end
+	end))
+
+	table.insert(NoFogRuntime.Connections, Lighting:GetPropertyChangedSignal("FogStart"):Connect(function()
+		if Lighting.FogStart ~= 0 then
+			Lighting.FogStart = 0
+		end
+	end))
+end
+
+function NoFogRuntime.Stop()
+	for _, conn in ipairs(NoFogRuntime.Connections) do
+		pcall(function()
+			conn:Disconnect()
+		end)
+	end
+	table.clear(NoFogRuntime.Connections)
+	NoFogRuntime.Started = false
+end
+
+function NoFogRuntime.Refresh()
+	if State.NoFogEnabled then
+		NoFogRuntime.Start()
+	else
+		NoFogRuntime.Stop()
+	end
+end
+
+local BlatantRuntime = {}
+do
+	local deleteToolConnections = {}
+
+	local function disconnectDeleteToolConnections()
+		for tool, conn in pairs(deleteToolConnections) do
+			pcall(function()
+				conn:Disconnect()
+			end)
+			deleteToolConnections[tool] = nil
+		end
+	end
+
+	local function getVelocityMultiValue()
+		local statistics = ReplicatedStorage:FindFirstChild("Statistics")
+		if not statistics then return nil end
+		local dmg = statistics:FindFirstChild("3DMG")
+		if not dmg then return nil end
+		return dmg:FindFirstChild("VelocityMulti")
+	end
+
+	local function applyVelocityMulti()
+		local velocity = getVelocityMultiValue()
+		if velocity and velocity:IsA("NumberValue") then
+			velocity.Value = math.clamp(State.V7Value, 1, 10)
+		elseif velocity and velocity:IsA("IntValue") then
+			velocity.Value = math.floor(math.clamp(State.V7Value, 1, 10) + 0.5)
+		end
+	end
+
+	local function applyDisableHandcutEffects()
+		local sfx = ReplicatedStorage:FindFirstChild("SFX")
+		if sfx then
+			local tools = sfx:FindFirstChild("Tools")
+			if tools then
+				local sound = tools:FindFirstChild("HandCutter")
+				if sound and sound:IsA("Sound") then
+					sound.Volume = 0
+					sound.Playing = false
+				end
+			end
+		end
+
+		local initializer = ReplicatedStorage:FindFirstChild("Initializer")
+		if initializer then
+			local effectsRoot = initializer:FindFirstChild("Effects")
+			if effectsRoot then
+				local handCutter = effectsRoot:FindFirstChild("HandCutter")
+				if handCutter then
+					local impact = handCutter:FindFirstChild("Impact")
+					if impact then
+						for _, v in ipairs(impact:GetDescendants()) do
+							if v:IsA("ParticleEmitter") or v:IsA("Trail") then
+								v.Enabled = false
+							end
+						end
+					end
+
+					local slashPart = handCutter:FindFirstChild("SlashPart")
+					if slashPart then
+						for _, v in ipairs(slashPart:GetDescendants()) do
+							if v:IsA("ParticleEmitter") or v:IsA("Trail") then
+								v.Enabled = false
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local function deleteHandcutEffects()
+		local sfxFolder = ReplicatedStorage:FindFirstChild("SFX")
+		if sfxFolder then
+			local tools = sfxFolder:FindFirstChild("Tools")
+			if tools then
+				local sound = tools:FindFirstChild("HandCutter")
+				if sound then
+					sound:Destroy()
+				end
+			end
+		end
+
+		local effects = ReplicatedStorage:FindFirstChild("Initializer")
+		if effects then
+			local effectsFolder = effects:FindFirstChild("Effects")
+			if effectsFolder then
+				local hc = effectsFolder:FindFirstChild("HandCutter")
+				if hc then
+					local impact = hc:FindFirstChild("Impact")
+					if impact then
+						impact:Destroy()
+					end
+
+					local slashPart = hc:FindFirstChild("SlashPart")
+					if slashPart then
+						local emitter = slashPart:FindFirstChild("ParticleEmitter")
+						if emitter then emitter:Destroy() end
+						local wind = slashPart:FindFirstChild("Wind")
+						if wind then wind:Destroy() end
+						local wind2 = slashPart:FindFirstChild("Wind2")
+						if wind2 then wind2:Destroy() end
+						local children = slashPart:GetChildren()
+						if children[5] then children[5]:Destroy() end
+						if children[4] then children[4]:Destroy() end
+					end
+				end
+			end
+		end
+	end
+
+	local function connectDeleteTool(tool)
+		if not tool or not tool:IsA("Tool") or tool.Name ~= "HandCutter" then return end
+		if deleteToolConnections[tool] then return end
+		deleteToolConnections[tool] = tool.Activated:Connect(function()
+			if State.HandcutDeleteEnabled then
+				deleteHandcutEffects()
+			end
+		end)
+		tool.AncestryChanged:Connect(function(_, parent)
+			if parent == nil and deleteToolConnections[tool] then
+				pcall(function()
+					deleteToolConnections[tool]:Disconnect()
+				end)
+				deleteToolConnections[tool] = nil
+			end
+		end)
+	end
+
+	local function hookDeleteTools()
+		if not State.HandcutDeleteEnabled then
+			disconnectDeleteToolConnections()
+			return
+		end
+		local backpack = player:FindFirstChild("Backpack")
+		if backpack then
+			for _, child in ipairs(backpack:GetChildren()) do
+				connectDeleteTool(child)
+			end
+		end
+		local char = player.Character
+		if char then
+			for _, child in ipairs(char:GetChildren()) do
+				connectDeleteTool(child)
+			end
+		end
+	end
+
+	local function giveHandcutTool()
+		local skillTools = ReplicatedStorage:FindFirstChild("SkillTools")
+		if not skillTools then return end
+		local skillTool = skillTools:FindFirstChild("HandCutter")
+		if not skillTool then return end
+
+		local backpack = player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 2)
+		local character = player.Character or player.CharacterAdded:Wait()
+		if not backpack or not character then return end
+
+		if backpack:FindFirstChild(skillTool.Name) or character:FindFirstChild(skillTool.Name) then
+			return
+		end
+
+		local clonedTool = skillTool:Clone()
+		clonedTool.Parent = backpack
+		if State.HandcutDeleteEnabled then
+			connectDeleteTool(clonedTool)
+		end
+	end
+
+	track(player.CharacterAdded:Connect(function()
+		if unloaded then return end
+		task.delay(0.5, function()
+			if unloaded then return end
+			hookDeleteTools()
+			if State.GiveHandcutEnabled then
+				giveHandcutTool()
+			end
+		end)
+	end))
+
+	track(player:WaitForChild("Backpack").ChildAdded:Connect(function(child)
+		if unloaded then return end
+		if State.HandcutDeleteEnabled then
+			connectDeleteTool(child)
+		end
+	end))
+
+	track(RunService.Heartbeat:Connect(function()
+		if unloaded then return end
+		if State.V7Enabled then
+			applyVelocityMulti()
+		end
+		if State.HandcutDisableEnabled then
+			applyDisableHandcutEffects()
+		end
+		if State.HandcutDeleteEnabled then
+			hookDeleteTools()
+		end
+		if State.GiveHandcutEnabled then
+			giveHandcutTool()
+		end
+	end))
+
+	function BlatantRuntime.RefreshDeleteHooks()
+		hookDeleteTools()
+	end
+
+	function BlatantRuntime.Stop()
+		disconnectDeleteToolConnections()
+	end
+end
+
+local HookRangeRuntime = {}
+do
+	local characterConnections = {}
+	local currentCharacter = nil
+	local updating = false
+
+	local function disconnectCharacterConnections()
+		for _, c in ipairs(characterConnections) do
+			pcall(function()
+				c:Disconnect()
+			end)
+		end
+		table.clear(characterConnections)
+	end
+
+	local function getBaseMaxHook(character)
+		local stored = character:GetAttribute("HookRangeBaseMaxHook")
+		if typeof(stored) == "number" then
+			return stored
+		end
+
+		local currentMaxHook = character:GetAttribute("MaxHook")
+		if typeof(currentMaxHook) ~= "number" then
+			return nil
+		end
+
+		character:SetAttribute("HookRangeBaseMaxHook", currentMaxHook)
+		return currentMaxHook
+	end
+
+	local function updateMaxHook(character)
+		if not character or updating then
+			return
+		end
+
+		local base = getBaseMaxHook(character)
+		if not base then
+			return
+		end
+
+		updating = true
+		if State.HookRangeExtenderEnabled then
+			character:SetAttribute("MaxHook", State.HookRangeValue)
+		else
+			character:SetAttribute("MaxHook", base)
+		end
+		updating = false
+	end
+
+	local function applyToCharacter(character)
+		disconnectCharacterConnections()
+		currentCharacter = character
+		if not character then
+			return
+		end
+
+		getBaseMaxHook(character)
+		updateMaxHook(character)
+		table.insert(characterConnections, character:GetAttributeChangedSignal("MaxHook"):Connect(function()
+			if updating then
+				return
+			end
+			local currentMaxHook = character:GetAttribute("MaxHook")
+			if typeof(currentMaxHook) == "number" and not State.HookRangeExtenderEnabled then
+				character:SetAttribute("HookRangeBaseMaxHook", currentMaxHook)
+			end
+			updateMaxHook(character)
+		end))
+	end
+
+	track(player.CharacterAdded:Connect(function(character)
+		task.wait(0.1)
+		applyToCharacter(character)
+	end))
+
+	if player.Character then
+		applyToCharacter(player.Character)
+	end
+
+	function HookRangeRuntime.Refresh()
+		if player.Character and player.Character ~= currentCharacter then
+			applyToCharacter(player.Character)
+		elseif currentCharacter then
+			updateMaxHook(currentCharacter)
+		end
+	end
+
+	function HookRangeRuntime.Stop()
+		if currentCharacter then
+			State.HookRangeExtenderEnabled = false
+			updateMaxHook(currentCharacter)
+		end
+		disconnectCharacterConnections()
+	end
+end
+
+local TitanNullifierRuntime = {}
+do
+	local patchLoopRunning = false
+	local TitanStateEvaluator
+
+	local function loadEvaluator()
+		local clientModules = ReplicatedStorage:FindFirstChild("Client_Modules") or ReplicatedStorage:FindFirstChild("ClientModules")
+		if not clientModules then return end
+
+		local evaluatorModule = clientModules:FindFirstChild("TitanStateEvaluator")
+		if not evaluatorModule then return end
+
+		local success, evaluator = pcall(require, evaluatorModule)
+		if not success or type(evaluator) ~= "table" then return end
+
+		TitanStateEvaluator = evaluator
+		return true
+	end
+
+	local function patchEvaluator()
+		if not State.TitanNullifierEnabled then return end
+		if not TitanStateEvaluator and not loadEvaluator() then return end
+		TitanStateEvaluator.BestActionForTime = function(_)
+			return {
+				Action = "None",
+				Priority = 0
+			}
+		end
+
+		TitanStateEvaluator.GetNearbyClasses = function()
+			return {}
+		end
+	end
+
+	local function startPatchLoop()
+		if patchLoopRunning then return end
+		patchLoopRunning = true
+		task.spawn(function()
+			while patchLoopRunning and not unloaded do
+				patchEvaluator()
+				task.wait(2)
+			end
+		end)
+	end
+
+	function TitanNullifierRuntime.Refresh()
+		if State.TitanNullifierEnabled then
+			patchEvaluator()
+			startPatchLoop()
+		else
+			patchLoopRunning = false
+		end
+	end
+
+	function TitanNullifierRuntime.Stop()
+		patchLoopRunning = false
+	end
+end
+
+local AntiGrabRuntime = {}
+do
+	local GrabModule = require(ReplicatedStorage:WaitForChild("Client_Modules"):WaitForChild("GrabModuleClient"))
+	local originalGrab = GrabModule.Grab
+	local currentConnection = nil
+	local patched = false
+
+	local function disconnectLoop()
+		if currentConnection then
+			currentConnection:Disconnect()
+			currentConnection = nil
+		end
+	end
+
+	local function antiGrabLoop(character)
+		disconnectLoop()
+		if not character then
+			return
+		end
+
+		currentConnection = RunService.RenderStepped:Connect(function()
+			if not State.AntiGrabV3Enabled then
+				return
+			end
+			if not character or not character.Parent then
+				return
+			end
+
+			local hum = character:FindFirstChild("Humanoid")
+			local hrp = character:FindFirstChild("HumanoidRootPart")
+
+			if character:HasTag("TitanGrabbed") then
+				CollectionService:RemoveTag(character, "TitanGrabbed")
+			end
+
+			if not character:HasTag("EndGrab") then
+				CollectionService:AddTag(character, "EndGrab")
+			end
+
+			if hrp and hrp.Anchored then
+				hrp.Anchored = false
+			end
+
+			if hum then
+				hum.AutoRotate = true
+				hum.PlatformStand = false
+			end
+		end)
+	end
+
+	local function patchGrab()
+		if patched then
+			return
+		end
+		patched = true
+		GrabModule.Grab = function(grabber, grabbed, offset, flip, duration)
+			if State.AntiGrabV3Enabled and grabbed == player.Character then
+				local char = player.Character
+				if char then
+					local hum = char:FindFirstChild("Humanoid")
+					local hrp = char:FindFirstChild("HumanoidRootPart")
+
+					if char:HasTag("TitanGrabbed") then
+						CollectionService:RemoveTag(char, "TitanGrabbed")
+					end
+
+					if not char:HasTag("EndGrab") then
+						CollectionService:AddTag(char, "EndGrab")
+					end
+
+					if hrp then
+						hrp.Anchored = false
+					end
+
+					if hum then
+						hum.AutoRotate = true
+						hum.PlatformStand = false
+						hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+					end
+				end
+
+				return
+			end
+
+			return originalGrab(grabber, grabbed, offset, flip, duration)
+		end
+	end
+
+	local function restoreGrab()
+		if patched then
+			GrabModule.Grab = originalGrab
+			patched = false
+		end
+	end
+
+	track(player.CharacterAdded:Connect(function(character)
+		task.wait(0.1)
+		antiGrabLoop(character)
+	end))
+
+	if player.Character then
+		antiGrabLoop(player.Character)
+	end
+
+	function AntiGrabRuntime.Refresh()
+		if State.AntiGrabV3Enabled then
+			patchGrab()
+			if player.Character then
+				antiGrabLoop(player.Character)
+			end
+		else
+			restoreGrab()
+			disconnectLoop()
+		end
+	end
+
+	function AntiGrabRuntime.Stop()
+		restoreGrab()
+		disconnectLoop()
+	end
+end
+
+local HorseStaminaRuntime = {}
+do
+	local function apply()
+		if not State.HorseStaminaEnabled then
+			return
+		end
+		local horse = workspace:FindFirstChild("Live") and workspace.Live:FindFirstChild(player.Name .. "Horse")
+		if not horse then
+			return
+		end
+		local maxStamina = horse:FindFirstChild("MaxStamina")
+		local stamina = horse:FindFirstChild("Stamina")
+		if maxStamina then
+			maxStamina.Value = 99999
+		end
+		if stamina then
+			stamina.Value = 99999
+		end
+	end
+
+	track(RunService.RenderStepped:Connect(function()
+		apply()
+	end))
+
+	function HorseStaminaRuntime.Refresh()
+		apply()
+	end
+
+	function HorseStaminaRuntime.Stop()
+	end
+end
+
+local GearRuntime = {}
+do
+	local gearConfig
+	local originalGen2
+
+	local defaultGen2 = {
+		BaseSpeedBoost = 145,
+		MaximumVelocityScaling = 45,
+		ReelingVelocityGainMultiplier = 1.45,
+		BaseRange = 300,
+		VelocityGainScaling = 2,
+		UpSpeedMaximumOne = 100,
+		RangeScaling = 100,
+		BaseVelocityGainMultiplierBoosting = 1.7,
+		GearName = "3DMG",
+		VeloCap = 300,
+		BaseVelocityGainGrounded = 5,
+		GasIntakeBase = 0.35,
+		BaseVelocityGain = 2,
+		TurnSpeedScaling = 5,
+		BoostUpSpeedMultiplier = 1.4,
+		BoostTurnSpeedMultiplier = 1.4,
+		MaxTurnSpeed = 200,
+		UpSpeedScaling = 5,
+		UpSpeedMaximumTwo = 85,
+		VelocityMultiplier = 1,
+		BaseMaximumVelocity = 300,
+		DownSpeedScalingBase = 100,
+		ReelSpeedBoost = 150,
+		BaseSpeed = 115,
+		UpSpeedBaseOne = 30,
+		Generation = 2,
+		DownSpeedScaling = 50,
+		GasIntakeScaling = 0.01,
+		UpSpeedGain = 75,
+		UpSpeedBaseTwo = 90,
+		GasBoostVelocityCapBypass = 25,
+		ReelingVelocityCapBypass = 12,
+		VelocityCapsByAcceleration = {295, 295, 295, 295, 295},
+	}
+
+	local function cloneTable(value)
+		if typeof(value) ~= "table" then
+			return value
+		end
+
+		local copy = {}
+		for key, item in pairs(value) do
+			copy[key] = cloneTable(item)
+		end
+		return copy
+	end
+
+	local function loadConfig()
+		if gearConfig then
+			return gearConfig
+		end
+
+		local clientModules = ReplicatedStorage:FindFirstChild("Client_Modules")
+		local gearClient = clientModules and clientModules:FindFirstChild("GearClient")
+		local gearModule = gearClient and gearClient:FindFirstChild("GearConfig")
+		if not gearModule then
+			return nil
+		end
+
+		local ok, config = pcall(require, gearModule)
+		if not ok or type(config) ~= "table" then
+			return nil
+		end
+
+		gearConfig = config
+		if type(config.GEN2) == "table" and not originalGen2 then
+			originalGen2 = cloneTable(config.GEN2)
+		end
+		return gearConfig
+	end
+
+	function GearRuntime.GetDefaultGen2()
+		return defaultGen2
+	end
+
+	function GearRuntime.Apply(values)
+		local config = loadConfig()
+		if not config or type(config.GEN2) ~= "table" then
+			return false
+		end
+
+		local source = State.GearConfigEnabled and values or originalGen2
+		if type(source) ~= "table" then
+			return false
+		end
+
+		for key, value in pairs(source) do
+			config.GEN2[key] = cloneTable(value)
+		end
+
+		return true
+	end
+end
+
+local ReworkRuntime = {}
+do
+	local function getRemote()
+		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		return remotes and remotes:FindFirstChild("DevConfigEvent")
+	end
+
+	function ReworkRuntime.Apply()
+		local payload = {
+			HitMultiEnabled = State.HitMultiEnabled,
+			HitMultiValue = State.HitMultiValue,
+			BladeReductionEnabled = State.BladeReductionEnabled,
+			BladeReductionValue = State.BladeReductionValue,
+		}
+
+		local remote = getRemote()
+		if remote and remote:IsA("RemoteEvent") then
+			remote:FireServer("Rework", payload)
+		end
+
+		player:SetAttribute("HitMultiEnabled", payload.HitMultiEnabled)
+		player:SetAttribute("HitMultiValue", payload.HitMultiValue)
+		player:SetAttribute("BladeReductionEnabled", payload.BladeReductionEnabled)
+		player:SetAttribute("BladeReductionValue", payload.BladeReductionValue)
+	end
+end
+
+local function mk(t, props)
+	local inst = Instance.new(t)
+	for k, v in pairs(props or {}) do
+		inst[k] = v
+	end
+	return inst
+end
+
+local COL_BG = Color3.fromRGB(8, 8, 10)
+local COL_TOP = Color3.fromRGB(12, 12, 15)
+local COL_PANEL = Color3.fromRGB(14, 14, 16)
+local COL_PANEL2 = Color3.fromRGB(20, 20, 24)
+local COL_INPUT = Color3.fromRGB(25, 25, 29)
+local COL_STROKE = Color3.fromRGB(115, 77, 255)
+local COL_STROKE_SOFT = Color3.fromRGB(47, 47, 56)
+local COL_TEXT = Color3.fromRGB(245, 245, 250)
+local COL_SUB = Color3.fromRGB(160, 160, 170)
+local COL_PURP = Color3.fromRGB(132, 84, 255)
+local COL_OFF = Color3.fromRGB(34, 34, 39)
+local COL_ON = Color3.fromRGB(132, 84, 255)
+
+local pages = {}
+local pageNames = {}
+local searchRecords = {}
+local cardRecords = {}
+local applyingSearch = false
+local activePage = "Main"
+local waitingForKeybind = false
+local searchBox
+local keybindLabel
+local keybindButton
+
+local gui = mk("ScreenGui", {
+	Name = "CheddarcheeseHub",
+	ResetOnSpawn = false,
+	Parent = player:WaitForChild("PlayerGui"),
+})
+
+local main = mk("Frame", {
+	Parent = gui,
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(980, 620),
+	BackgroundColor3 = COL_BG,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+})
+mk("UICorner", { Parent = main, CornerRadius = UDim.new(0, 14) })
+mk("UIStroke", { Parent = main, Color = COL_STROKE, Thickness = 1, Transparency = 0 })
+
+local topBar = mk("Frame", {
+	Name = "TopBar",
+	Parent = main,
+	Size = UDim2.new(1, 0, 0, 64),
+	BackgroundColor3 = COL_TOP,
+	BorderSizePixel = 0,
+})
+mk("UIStroke", { Parent = topBar, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.45 })
+
+local logo = mk("ImageLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 12, 0, 5),
+	Size = UDim2.fromOffset(51, 51),
+	BackgroundTransparency = 1,
+	Image = "rbxthumb://type=Asset&id=78750659030501&w=150&h=150",
+	ScaleType = Enum.ScaleType.Fit,
+})
+mk("UICorner", { Parent = logo, CornerRadius = UDim.new(0, 10) })
+
+mk("TextLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 74, 0, 10),
+	Size = UDim2.new(0, 340, 0, 24),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 20,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_TEXT,
+	Text = "CheddarCheeseHub | Defiance",
+})
+
+mk("TextLabel", {
+	Parent = topBar,
+	Position = UDim2.new(0, 67, 0, 35),
+	Size = UDim2.new(0, 340, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Utility AOT CC Hub",
+})
+
+local keybindHint = mk("TextLabel", {
+	Parent = topBar,
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -124, 0.5, 0),
+	Size = UDim2.new(0, 140, 1, 0),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextColor3 = COL_SUB,
+	Text = "LeftAlt to toggle UI",
+})
+
+searchBox = mk("TextBox", {
+	Name = "Search",
+	Parent = topBar,
+	Position = UDim2.new(0, 420, 0, 12),
+	Size = UDim2.new(1, -520, 0, 40),
+	BackgroundColor3 = COL_INPUT,
+	BorderSizePixel = 0,
+	PlaceholderText = "Search",
+	Text = "",
+	TextColor3 = COL_TEXT,
+	PlaceholderColor3 = COL_SUB,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 14,
+})
+mk("UICorner", { Parent = searchBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = searchBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.35 })
+
+local closeBtn = mk("TextButton", {
+	Parent = topBar,
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -54, 0.5, 0),
+	Size = UDim2.fromOffset(32, 32),
+	BackgroundColor3 = COL_PANEL2,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	Text = "X",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = closeBtn, CornerRadius = UDim.new(0, 10) })
+mk("UIStroke", { Parent = closeBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.1 })
+
+local minimizeBtn = mk("TextButton", {
+	Parent = topBar,
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -16, 0.5, 0),
+	Size = UDim2.fromOffset(32, 32),
+	BackgroundColor3 = COL_PANEL2,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	Text = "–",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = minimizeBtn, CornerRadius = UDim.new(0, 10) })
+mk("UIStroke", { Parent = minimizeBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.1 })
+
+local side = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 0, 0, 64),
+	Size = UDim2.new(0, 220, 1, -64),
+	BackgroundColor3 = COL_PANEL,
+	BorderSizePixel = 0,
+})
+mk("UIStroke", { Parent = side, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.55 })
+
+local content = mk("Frame", {
+	Parent = main,
+	Position = UDim2.new(0, 220, 0, 64),
+	Size = UDim2.new(1, -220, 1, -64),
+	BackgroundColor3 = COL_BG,
+	BorderSizePixel = 0,
+})
+
+local function pageNameFrom(object)
+	while object do
+		if pageNames[object] then
+			return pageNames[object]
+		end
+		object = object.Parent
+	end
+	return activePage
+end
+
+local function trimText(text)
+	return tostring(text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function addSearchText(card, text)
+	local record = cardRecords[card]
+	if record then
+		record.SearchText = trimText(record.SearchText .. " " .. tostring(text or ""))
+	end
+end
+
+local function applyFeatureSearch()
+	if applyingSearch or not searchBox then
+		return
+	end
+	applyingSearch = true
+
+	local query = trimText(searchBox.Text)
+	if query == "" then
+		for _, record in ipairs(searchRecords) do
+			record.Card.Visible = true
+		end
+		for pageName, page in pairs(pages) do
+			page.Visible = pageName == activePage
+		end
+		applyingSearch = false
+		return
+	end
+
+	local firstPage
+	for _, record in ipairs(searchRecords) do
+		local matched = record.SearchText:find(query, 1, true) ~= nil
+		record.Card.Visible = matched
+		if matched and not firstPage then
+			firstPage = record.PageName
+		end
+	end
+
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == firstPage
+	end
+	for tabName, btn in pairs(tabButtons) do
+		local on = tabName == firstPage
+		btn.BackgroundColor3 = on and Color3.fromRGB(31, 26, 47) or Color3.fromRGB(16, 16, 19)
+		btn.TextColor3 = on and COL_TEXT or COL_SUB
+	end
+	applyingSearch = false
+end
+
+local function newPage(name)
+	local f = mk("ScrollingFrame", {
+		Parent = content,
+		Position = UDim2.new(0, 18, 0, 18),
+		Size = UDim2.new(1, -36, 1, -36),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = COL_STROKE,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = false,
+	})
+	local layout = mk("UIListLayout", {
+		Parent = f,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
+	mk("UIPadding", {
+		Parent = f,
+		PaddingTop = UDim.new(0, 2),
+		PaddingBottom = UDim.new(0, 18),
+	})
+	pages[name] = f
+	pageNames[f] = name
+	return f
+end
+
+local pageMain = newPage("Main")
+local pageBlatant = newPage("Blatant")
+local pageVisuals = newPage("Visuals")
+local pageTitanEyes = newPage("Titan Eyes")
+local pagePlayers = newPage("Players")
+local pageMisc = newPage("Misc")
+local pageUI = newPage("UI Settings")
+local pageGcool = newPage("Gcool Special")
+local pageGear = newPage("Gear")
+local pageRework = newPage("Rework")
+
+local function sectionBox(parent, x, y, w, h, headerText)
+	local box = mk("Frame", {
+		Parent = parent,
+		Size = UDim2.new(1, -6, 0, h),
+		BackgroundColor3 = COL_PANEL,
+		BorderSizePixel = 0,
+	})
+	mk("UICorner", { Parent = box, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = box, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.22 })
+	mk("UIGradient", {
+		Parent = box,
+		Rotation = 90,
+		Color = ColorSequence.new(COL_PANEL, COL_PANEL2),
+	})
+
+	mk("TextLabel", {
+		Parent = box,
+		Position = UDim2.new(0, 18, 0, 12),
+		Size = UDim2.new(1, -36, 0, 22),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = COL_TEXT,
+		Text = headerText,
+	})
+
+	local pageName = pageNameFrom(parent)
+	local record = {
+		Card = box,
+		PageName = pageName,
+		SearchText = trimText(headerText),
+	}
+	cardRecords[box] = record
+	searchRecords[#searchRecords + 1] = record
+
+	return box
+end
+
+local function toggleRow(parent, y, labelText)
+	addSearchText(parent, labelText)
+	mk("TextLabel", {
+		Parent = parent,
+		Position = UDim2.new(0, 18, 0, y),
+		Size = UDim2.new(1, -140, 0, 30),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = COL_SUB,
+		Text = labelText,
+	})
+
+	local btn = mk("TextButton", {
+		Parent = parent,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -22, 0, y + 2),
+		Size = UDim2.fromOffset(82, 27),
+		BackgroundColor3 = COL_OFF,
+		TextColor3 = COL_TEXT,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		Text = "ON",
+		AutoButtonColor = false,
+	})
+	mk("UICorner", { Parent = btn, CornerRadius = UDim.new(0, 14) })
+	mk("UIStroke", { Parent = btn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.25 })
+
+	return btn
+end
+
+local function setToggle(btn, on)
+	btn.Text = on and "ON" or "OFF"
+	btn.BackgroundColor3 = on and COL_ON or COL_OFF
+end
+
+local function inputRow(parent, y, labelText, valueText, width)
+	addSearchText(parent, labelText)
+	mk("TextLabel", {
+		Parent = parent,
+		Position = UDim2.new(0, 18, 0, y),
+		Size = UDim2.new(0, 250, 0, 24),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = COL_SUB,
+		Text = labelText,
+	})
+
+	local box = mk("TextBox", {
+		Parent = parent,
+		Position = UDim2.new(0, 275, 0, y),
+		Size = UDim2.new(0, width or 150, 0, 24),
+		BackgroundColor3 = COL_INPUT,
+		TextColor3 = COL_TEXT,
+		BorderSizePixel = 0,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 11,
+		Text = tostring(valueText),
+	})
+	mk("UICorner", { Parent = box, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = box, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+	return box
+end
+
+local function keyName(kc)
+	local s = tostring(kc)
+	local p = s:match("^Enum%.KeyCode%.(.+)$")
+	return p or s
+end
+
+local blatantScroll = mk("ScrollingFrame", {
+	Parent = pageBlatant,
+	Position = UDim2.new(0, 0, 0, 0),
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 620),
+	ScrollBarThickness = 8,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	Active = true,
+	ScrollingEnabled = true,
+})
+
+local boxBlatant = sectionBox(blatantScroll, 16, 16, 460, 560, "Blatant")
+local v7Toggle = toggleRow(boxBlatant, 44, "Velocity Multi V7")
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 78),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Sets ReplicatedStorage.Statistics.3DMG.VelocityMulti while enabled.",
+})
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 108),
+	Size = UDim2.new(0, 220, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Velocity Value (1-10x)",
+})
+
+local v7ValueBox = mk("TextBox", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 126),
+	Size = UDim2.new(0, 300, 0, 24),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.V7Value),
+})
+mk("UICorner", { Parent = v7ValueBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = v7ValueBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local v7ApplyBtn = mk("TextButton", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 322, 0, 126),
+	Size = UDim2.new(0, 120, 0, 24),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = v7ApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local handcutDisableToggle = toggleRow(boxBlatant, 178, "Disable Handcut Effects")
+local handcutDeleteToggle = toggleRow(boxBlatant, 212, "Delete Handcut Effects")
+local giveHandcutToggle = toggleRow(boxBlatant, 246, "Give Handcut Tool")
+
+mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 282),
+	Size = UDim2.new(1, -24, 0, 36),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Note: do not have Disable Handcut Effects and Delete Handcut Effects on at the same time.",
+})
+
+local blatantNote = mk("TextLabel", {
+	Parent = boxBlatant,
+	Position = UDim2.new(0, 12, 0, 334),
+	Size = UDim2.new(1, -24, 0, 200),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = COL_SUB,
+	Text = "Blatant page controls:\n\n• Velocity Multi V7 sets the 3DMG VelocityMulti value while the toggle is on.\n• Disable Handcut Effects turns off the HandCutter sound and particles/trails.\n• Delete Handcut Effects destroys the listed HandCutter sound/effect objects when the tool activates.\n• Give Handcut Tool clones HandCutter from ReplicatedStorage.SkillTools into your Backpack if you do not already have it.",
+})
+
+local boxA = sectionBox(pageMain, 16, 16, 460, 370, "Titan Settings")
+local napeToggle = toggleRow(boxA, 44, "Nape Hitbox (Nape + ServerHB)")
+local grabHBtoggle = toggleRow(boxA, 78, "Disable Grab Hitboxes (V2)")
+local napeXYZToggle = toggleRow(boxA, 112, "Use XYZ Nape Scale")
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 12, 0, 148),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Quick Multiplier (1-30)",
+})
+
+local multBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 12, 0, 170),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeMult),
+})
+mk("UICorner", { Parent = multBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = multBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local applyBtn = mk("TextButton", {
+	Parent = boxA,
+	Position = UDim2.new(0, 322, 0, 170),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = applyBtn, CornerRadius = UDim.new(0, 8) })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 12, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale X",
+})
+
+local napeXBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 12, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeScaleX),
+})
+mk("UICorner", { Parent = napeXBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeXBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 118, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale Y",
+})
+
+local napeYBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 118, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeScaleY),
+})
+mk("UICorner", { Parent = napeYBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeYBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 224, 0, 212),
+	Size = UDim2.new(0, 120, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Scale Z",
+})
+
+local napeZBox = mk("TextBox", {
+	Parent = boxA,
+	Position = UDim2.new(0, 224, 0, 230),
+	Size = UDim2.new(0, 90, 0, 22),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.NapeScaleZ),
+})
+mk("UICorner", { Parent = napeZBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = napeZBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local napeXYZApplyBtn = mk("TextButton", {
+	Parent = boxA,
+	Position = UDim2.new(0, 332, 0, 230),
+	Size = UDim2.new(0, 110, 0, 22),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	Text = "APPLY XYZ",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = napeXYZApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+mk("TextLabel", {
+	Parent = boxA,
+	Position = UDim2.new(0, 12, 0, 266),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "Quick Multiplier works when XYZ Scale is OFF. XYZ Scale works when XYZ Scale is ON.",
+})
+
+local boxV = sectionBox(pageVisuals, 16, 16, 460, 340, "Visuals")
+local espToggle = toggleRow(boxV, 44, "Titan ESP (Nape)")
+local refillToggle = toggleRow(boxV, 78, "Refill ESP")
+
+mk("TextLabel", {
+	Parent = boxV,
+	Position = UDim2.new(0, 12, 0, 118),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Titan ESP Box Transparency (0-1)",
+})
+
+local espTransBox = mk("TextBox", {
+	Parent = boxV,
+	Position = UDim2.new(0, 12, 0, 140),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.TitanESPBoxTransparency),
+})
+mk("UICorner", { Parent = espTransBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = espTransBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local espApplyBtn = mk("TextButton", {
+	Parent = boxV,
+	Position = UDim2.new(0, 322, 0, 140),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = espApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local boxE = sectionBox(pageTitanEyes, 16, 16, 460, 340, "Titan Eyes")
+local eyesToggle = toggleRow(boxE, 44, "Expand Eyes")
+
+mk("TextLabel", {
+	Parent = boxE,
+	Position = UDim2.new(0, 12, 0, 86),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Eyes Multiplier (1-80)",
+})
+
+local eyesMultBox = mk("TextBox", {
+	Parent = boxE,
+	Position = UDim2.new(0, 12, 0, 108),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.TitanEyesMult),
+})
+mk("UICorner", { Parent = eyesMultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = eyesMultBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local eyesApplyBtn = mk("TextButton", {
+	Parent = boxE,
+	Position = UDim2.new(0, 322, 0, 108),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = eyesApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local boxP = sectionBox(pagePlayers, 16, 16, 460, 340, "Players")
+local plrEspToggle = toggleRow(boxP, 44, "Player ESP")
+local headExpandToggle = toggleRow(boxP, 78, "Expand Head")
+local torsoExpandToggle = toggleRow(boxP, 112, "Expand Torso")
+local noTouchToggle = toggleRow(boxP, 146, "Player NoTouch")
+
+mk("TextLabel", {
+	Parent = boxP,
+	Position = UDim2.new(0, 12, 0, 184),
+	Size = UDim2.new(0, 180, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Head Multiplier (1-30)",
+})
+
+local headMultBox = mk("TextBox", {
+	Parent = boxP,
+	Position = UDim2.new(0, 12, 0, 202),
+	Size = UDim2.new(0, 140, 0, 22),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.PlayerHeadMult),
+})
+mk("UICorner", { Parent = headMultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = headMultBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+mk("TextLabel", {
+	Parent = boxP,
+	Position = UDim2.new(0, 180, 0, 184),
+	Size = UDim2.new(0, 180, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Torso Multiplier (1-30)",
+})
+
+local torsoMultBox = mk("TextBox", {
+	Parent = boxP,
+	Position = UDim2.new(0, 180, 0, 202),
+	Size = UDim2.new(0, 140, 0, 22),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.PlayerTorsoMult),
+})
+mk("UICorner", { Parent = torsoMultBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = torsoMultBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local plrApplyBtn = mk("TextButton", {
+	Parent = boxP,
+	Position = UDim2.new(0, 336, 0, 202),
+	Size = UDim2.new(0, 106, 0, 22),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = plrApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local boxF = sectionBox(pageMisc, 16, 16, 460, 340, "Misc")
+local noFogToggle = toggleRow(boxF, 44, "No Fog")
+
+local boxU = sectionBox(pageUI, 16, 16, 460, 340, "UI Settings")
+addSearchText(boxU, "toggle keybind change keybind hide ui reset ui position unload hub")
+keybindLabel = mk("TextLabel", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 44),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Toggle Keybind: LeftAlt",
+})
+
+keybindButton = mk("TextButton", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 74),
+	Size = UDim2.new(0, 200, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Change Keybind",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = keybindButton, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = keybindButton, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local resetPos = mk("TextButton", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 110),
+	Size = UDim2.new(0, 200, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Reset UI Position",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = resetPos, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = resetPos, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local hideUiBtn = mk("TextButton", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 146),
+	Size = UDim2.new(0, 200, 0, 26),
+	BackgroundColor3 = COL_PANEL2,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Hide UI",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = hideUiBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = hideUiBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local unloadBtn = mk("TextButton", {
+	Parent = boxU,
+	Position = UDim2.new(0, 12, 0, 182),
+	Size = UDim2.new(0, 200, 0, 26),
+	BackgroundColor3 = Color3.fromRGB(120, 55, 55),
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "Unload Hub",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = unloadBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = unloadBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local gcoolScroll = mk("ScrollingFrame", {
+	Parent = pageGcool,
+	Position = UDim2.new(0, 0, 0, 0),
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 520),
+	ScrollBarThickness = 8,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	Active = true,
+	ScrollingEnabled = true,
+})
+
+local boxGcool = sectionBox(gcoolScroll, 16, 16, 460, 440, "Gcool Special")
+local hookRangeToggle = toggleRow(boxGcool, 44, "Hook Range Extender")
+
+mk("TextLabel", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 12, 0, 80),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Hook Range Value",
+})
+
+local hookRangeBox = mk("TextBox", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 12, 0, 100),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = tostring(State.HookRangeValue),
+})
+mk("UICorner", { Parent = hookRangeBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = hookRangeBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local hookRangeApplyBtn = mk("TextButton", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 322, 0, 100),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = hookRangeApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+local titanNullifierToggle = toggleRow(boxGcool, 156, "Titan Nullifier")
+local antiGrabV3Toggle = toggleRow(boxGcool, 190, "Anti Grab V3")
+local horseStaminaToggle = toggleRow(boxGcool, 224, "Horse Stamina")
+
+mk("TextLabel", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 12, 0, 260),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Horse Stamina Value",
+})
+
+local horseStaminaBox = mk("TextBox", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 12, 0, 280),
+	Size = UDim2.new(0, 300, 0, 26),
+	BackgroundColor3 = COL_INPUT,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	ClearTextOnFocus = false,
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 12,
+	Text = "99999",
+})
+mk("UICorner", { Parent = horseStaminaBox, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = horseStaminaBox, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local horseStaminaApplyBtn = mk("TextButton", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 322, 0, 280),
+	Size = UDim2.new(0, 120, 0, 26),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = horseStaminaApplyBtn, CornerRadius = UDim.new(0, 8) })
+
+mk("TextLabel", {
+	Parent = boxGcool,
+	Position = UDim2.new(0, 12, 0, 318),
+	Size = UDim2.new(1, -24, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = Color3.fromRGB(145,145,145),
+	Text = "ONLY USE WHEN HORSE IS SPAWNED",
+})
+
+local gearScroll = mk("ScrollingFrame", {
+	Parent = pageGear,
+	Position = UDim2.new(0, 0, 0, 0),
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 1080),
+	ScrollBarThickness = 8,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	Active = true,
+	ScrollingEnabled = true,
+})
+
+local boxGear = sectionBox(gearScroll, 16, 16, 460, 1040, "Gear GEN2")
+local gearToggle = toggleRow(boxGear, 44, "Gear Config")
+local gearBoxes = {}
+local gearOrder = {
+	"BaseSpeedBoost",
+	"MaximumVelocityScaling",
+	"ReelingVelocityGainMultiplier",
+	"BaseRange",
+	"VelocityGainScaling",
+	"UpSpeedMaximumOne",
+	"RangeScaling",
+	"BaseVelocityGainMultiplierBoosting",
+	"GearName",
+	"VeloCap",
+	"BaseVelocityGainGrounded",
+	"GasIntakeBase",
+	"BaseVelocityGain",
+	"TurnSpeedScaling",
+	"BoostUpSpeedMultiplier",
+	"BoostTurnSpeedMultiplier",
+	"MaxTurnSpeed",
+	"UpSpeedScaling",
+	"UpSpeedMaximumTwo",
+	"VelocityMultiplier",
+	"BaseMaximumVelocity",
+	"DownSpeedScalingBase",
+	"ReelSpeedBoost",
+	"BaseSpeed",
+	"UpSpeedBaseOne",
+	"Generation",
+	"DownSpeedScaling",
+	"GasIntakeScaling",
+	"UpSpeedGain",
+	"UpSpeedBaseTwo",
+	"GasBoostVelocityCapBypass",
+	"ReelingVelocityCapBypass",
+	"VelocityCapsByAcceleration",
+}
+
+local defaultGen2 = GearRuntime.GetDefaultGen2()
+for index, key in ipairs(gearOrder) do
+	local value = defaultGen2[key]
+	if type(value) == "table" then
+		value = table.concat(value, ",")
+	end
+	gearBoxes[key] = inputRow(boxGear, 94 + index * 26, key, value, key == "GearName" and 170 or 150)
+end
+
+local gearMasterBtn = mk("TextButton", {
+	Parent = boxGear,
+	Position = UDim2.new(0, 18, 0, 82),
+	Size = UDim2.new(0, 407, 0, 28),
+	BackgroundColor3 = COL_PANEL2,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "MASTER ENABLE",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = gearMasterBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = gearMasterBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local gearApplyBtn = mk("TextButton", {
+	Parent = boxGear,
+	Position = UDim2.new(0, 18, 0, 985),
+	Size = UDim2.new(0, 407, 0, 28),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY GEN2 CHANGES",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = gearApplyBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = gearApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local boxRework = sectionBox(pageRework, 16, 16, 460, 260, "Rework")
+local hitMultiToggle = toggleRow(boxRework, 44, "Hit Multi")
+local hitMultiBox = inputRow(boxRework, 82, "Hit Multi Amount", State.HitMultiValue, 150)
+local hitMultiApplyBtn = mk("TextButton", {
+	Parent = boxRework,
+	Position = UDim2.new(0, 18, 0, 116),
+	Size = UDim2.new(0, 407, 0, 28),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY HIT MULTI",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = hitMultiApplyBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = hitMultiApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local bladeReductionToggle = toggleRow(boxRework, 158, "SelfBlade Damage Reduction")
+local bladeReductionBox = inputRow(boxRework, 196, "Blade Multiplier", State.BladeReductionValue, 150)
+local bladeReductionApplyBtn = mk("TextButton", {
+	Parent = boxRework,
+	Position = UDim2.new(0, 18, 0, 224),
+	Size = UDim2.new(0, 407, 0, 28),
+	BackgroundColor3 = COL_PURP,
+	TextColor3 = COL_TEXT,
+	BorderSizePixel = 0,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "APPLY BLADE REDUCTION",
+	AutoButtonColor = false,
+})
+mk("UICorner", { Parent = bladeReductionApplyBtn, CornerRadius = UDim.new(0, 8) })
+mk("UIStroke", { Parent = bladeReductionApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+
+local tabButtons = {}
+
+local function setTabActive(name)
+	if name then
+		activePage = name
+	end
+	if searchBox then
+		searchBox.Text = ""
+	end
+	for tabName, frame in pairs(pages) do
+		frame.Visible = (tabName == activePage)
+	end
+	for _, record in ipairs(searchRecords) do
+		record.Card.Visible = true
+	end
+	for tabName, btn in pairs(tabButtons) do
+		local on = (tabName == activePage)
+		btn.BackgroundColor3 = on and Color3.fromRGB(31, 26, 47) or Color3.fromRGB(16, 16, 19)
+		btn.TextColor3 = on and COL_TEXT or COL_SUB
+	end
+end
+
+mk("TextLabel", {
+	Parent = side,
+	Position = UDim2.new(0, 18, 0, 18),
+	Size = UDim2.new(1, -36, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = COL_SUB,
+	Text = "Navigation",
+})
+
+local function makeSideTab(y, text, name)
+	local tab = mk("TextButton", {
+		Parent = side,
+		Position = UDim2.new(0, 12, 0, y),
+		Size = UDim2.new(1, -24, 0, 38),
+		BackgroundColor3 = Color3.fromRGB(16, 16, 19),
+		TextColor3 = COL_SUB,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "   "..text,
+		AutoButtonColor = false,
+	})
+	mk("UICorner", { Parent = tab, CornerRadius = UDim.new(0, 8) })
+	tabButtons[name] = tab
+	track(tab.MouseButton1Click:Connect(function()
+		setTabActive(name)
+	end))
+	return tab
+end
+
+makeSideTab(54, "Main", "Main")
+makeSideTab(100, "Blatant", "Blatant")
+makeSideTab(146, "Visuals", "Visuals")
+makeSideTab(192, "Titan Eyes", "Titan Eyes")
+makeSideTab(238, "Players", "Players")
+makeSideTab(284, "Misc", "Misc")
+makeSideTab(330, "UI Settings", "UI Settings")
+makeSideTab(376, "Gcool Special", "Gcool Special")
+makeSideTab(422, "Gear", "Gear")
+makeSideTab(468, "Rework", "Rework")
+
+local function refreshBindText()
+	local name = keyName(State.ToggleKeybind)
+	if keybindHint then
+		keybindHint.Text = name .. " to toggle UI"
+	end
+	if keybindLabel then
+		keybindLabel.Text = "Toggle Keybind: " .. name
+	end
+	if keybindButton then
+		keybindButton.Text = waitingForKeybind and "Press a key" or "Change Keybind"
+	end
+end
+
+local function parseGearValue(key, text, fallback)
+	if type(fallback) == "number" then
+		return tonumber(text) or fallback
+	end
+
+	if type(fallback) == "table" then
+		local values = {}
+		for part in tostring(text):gmatch("[^,]+") do
+			values[#values + 1] = tonumber(part) or 0
+		end
+		if #values == 0 then
+			return fallback
+		end
+		return values
+	end
+
+	return tostring(text)
+end
+
+local function readGearValues()
+	local defaults = GearRuntime.GetDefaultGen2()
+	local values = {}
+	for _, key in ipairs(gearOrder) do
+		values[key] = parseGearValue(key, gearBoxes[key].Text, defaults[key])
+	end
+	return values
+end
+
+local function applyGearConfig()
+	local values = readGearValues()
+	GearRuntime.Apply(values)
+end
+
+local function applyHitMulti()
+	local value = tonumber(hitMultiBox.Text)
+	if not value then
+		value = State.HitMultiValue
+	end
+	State.HitMultiValue = math.clamp(math.floor(value + 0.5), 1, 20)
+	hitMultiBox.Text = tostring(State.HitMultiValue)
+	ReworkRuntime.Apply()
+end
+
+local function applyBladeReduction()
+	local value = tonumber(bladeReductionBox.Text)
+	if not value then
+		value = State.BladeReductionValue
+	end
+	State.BladeReductionValue = math.clamp(value, 0, 1)
+	bladeReductionBox.Text = tostring(State.BladeReductionValue)
+	ReworkRuntime.Apply()
+end
+
+local function applyMultiplier()
+	local n = tonumber(multBox.Text)
+	if not n then
+		multBox.Text = tostring(State.NapeMult)
+		return
+	end
+	n = math.floor(n + 0.5)
+	n = math.clamp(n, 1, 30)
+	State.NapeMult = n
+	patchAllTitans()
+end
+
+local function applyNapeXYZConfig()
+	local x = tonumber(napeXBox.Text)
+	local y = tonumber(napeYBox.Text)
+	local z = tonumber(napeZBox.Text)
+
+	if not x then x = State.NapeScaleX end
+	if not y then y = State.NapeScaleY end
+	if not z then z = State.NapeScaleZ end
+
+	State.NapeScaleX = math.clamp(x, 0.05, 30000)
+	State.NapeScaleY = math.clamp(y, 0.05, 30000)
+	State.NapeScaleZ = math.clamp(z, 0.05, 30000)
+
+	napeXBox.Text = tostring(State.NapeScaleX)
+	napeYBox.Text = tostring(State.NapeScaleY)
+	napeZBox.Text = tostring(State.NapeScaleZ)
+
+	patchAllTitans()
+end
+
+local function applyV7Config()
+	local n = tonumber(v7ValueBox.Text)
+	if not n then
+		v7ValueBox.Text = tostring(State.V7Value)
+		return
+	end
+	n = math.clamp(n, 1, 10)
+	State.V7Value = n
+	v7ValueBox.Text = tostring(State.V7Value)
+end
+
+local function applyESPTrans()
+	local n = tonumber(espTransBox.Text)
+	if not n then
+		espTransBox.Text = tostring(State.TitanESPBoxTransparency)
+		return
+	end
+	n = math.clamp(n, 0, 1)
+	State.TitanESPBoxTransparency = n
+	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
+	espApplyTitanTransparency()
+end
+
+local function applyEyesConfig()
+	local n = tonumber(eyesMultBox.Text)
+	if not n then
+		eyesMultBox.Text = tostring(State.TitanEyesMult)
+		return
+	end
+	n = math.floor(n + 0.5)
+	n = math.clamp(n, 1, 80)
+	State.TitanEyesMult = n
+	eyesMultBox.Text = tostring(State.TitanEyesMult)
+	patchAllTitans()
+end
+
+local function applyMinFall()
+end
+
+local function applyNearGround()
+end
+
+local function applyPlayerConfig()
+	local hm = tonumber(headMultBox.Text)
+	if not hm then hm = State.PlayerHeadMult end
+	hm = math.clamp(math.floor(hm + 0.5), 1, 30)
+	State.PlayerHeadMult = hm
+	headMultBox.Text = tostring(State.PlayerHeadMult)
+
+	local tm = tonumber(torsoMultBox.Text)
+	if not tm then tm = State.PlayerTorsoMult end
+	tm = math.clamp(math.floor(tm + 0.5), 1, 30)
+	State.PlayerTorsoMult = tm
+	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
+
+	applyPlayerExpandAll()
+end
+
+local function applyHookRangeConfig()
+	local n = tonumber(hookRangeBox.Text)
+	if not n then
+		hookRangeBox.Text = tostring(State.HookRangeValue)
+	horseStaminaBox.Text = horseStaminaBox.Text == "" and "99999" or horseStaminaBox.Text
+		return
+	end
+	n = math.floor(n + 0.5)
+	State.HookRangeValue = math.clamp(n, 0, 1000000000)
+	hookRangeBox.Text = tostring(State.HookRangeValue)
+	horseStaminaBox.Text = horseStaminaBox.Text == "" and "99999" or horseStaminaBox.Text
+	HookRangeRuntime.Refresh()
+end
+
+local function applyHorseStaminaConfig()
+	local n = tonumber(horseStaminaBox.Text)
+	if not n then
+		horseStaminaBox.Text = "99999"
+		return
+	end
+	n = math.floor(n + 0.5)
+	n = math.clamp(n, 0, 1000000000)
+	horseStaminaBox.Text = tostring(n)
+	HorseStaminaRuntime.Refresh()
+end
+
+local function refresh()
+	setToggle(v7Toggle, State.V7Enabled)
+	setToggle(handcutDisableToggle, State.HandcutDisableEnabled)
+	setToggle(handcutDeleteToggle, State.HandcutDeleteEnabled)
+	setToggle(giveHandcutToggle, State.GiveHandcutEnabled)
+
+	setToggle(napeToggle, State.NapeEnabled)
+	setToggle(grabHBtoggle, State.DisableGrabHitboxes)
+	setToggle(napeXYZToggle, State.NapeUseXYZ)
+
+	setToggle(espToggle, State.TitanESP)
+	setToggle(refillToggle, State.RefillESP)
+
+	setToggle(eyesToggle, State.TitanEyesEnabled)
+
+	setToggle(plrEspToggle, State.PlayerESP)
+	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
+	setToggle(torsoExpandToggle, State.PlayerTorsoExpandEnabled)
+	setToggle(noTouchToggle, State.PlayerNoTouch)
+
+	setToggle(noFogToggle, State.NoFogEnabled)
+
+	setToggle(hookRangeToggle, State.HookRangeExtenderEnabled)
+	setToggle(titanNullifierToggle, State.TitanNullifierEnabled)
+	setToggle(antiGrabV3Toggle, State.AntiGrabV3Enabled)
+	setToggle(horseStaminaToggle, State.HorseStaminaEnabled)
+	setToggle(gearToggle, State.GearConfigEnabled)
+	setToggle(hitMultiToggle, State.HitMultiEnabled)
+	setToggle(bladeReductionToggle, State.BladeReductionEnabled)
+
+	v7ValueBox.Text = tostring(State.V7Value)
+
+	multBox.Text = tostring(State.NapeMult)
+	napeXBox.Text = tostring(State.NapeScaleX)
+	napeYBox.Text = tostring(State.NapeScaleY)
+	napeZBox.Text = tostring(State.NapeScaleZ)
+
+	espTransBox.Text = tostring(State.TitanESPBoxTransparency)
+	eyesMultBox.Text = tostring(State.TitanEyesMult)
+	headMultBox.Text = tostring(State.PlayerHeadMult)
+	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
+	hookRangeBox.Text = tostring(State.HookRangeValue)
+	horseStaminaBox.Text = horseStaminaBox.Text == "" and "99999" or horseStaminaBox.Text
+	hitMultiBox.Text = tostring(State.HitMultiValue)
+	bladeReductionBox.Text = tostring(State.BladeReductionValue)
+
+	refreshBindText()
+
+	if not State.TitanESP then
+		espDetachAllTitans()
+	end
+
+	if not State.RefillESP then
+		detachAllRefillESP()
+	end
+
+	pcall(function()
+		BlatantRuntime.RefreshDeleteHooks()
+	end)
+
+	pcall(function()
+		TitanNullifierRuntime.Refresh()
+	end)
+
+	pcall(function()
+		AntiGrabRuntime.Refresh()
+	end)
+
+	pcall(function()
+		HookRangeRuntime.Refresh()
+	end)
+
+	pcall(function()
+		HorseStaminaRuntime.Refresh()
+	end)
+
+	pcall(function()
+		NoFogRuntime.Refresh()
+	end)
+end
+
+local function unload()
+	if unloaded then return end
+	unloaded = true
+
+	if State.PlayerNoTouch then
+		pcall(function()
+			restorePlayerNoTouch()
+		end)
+	end
+
+	State.TitanESP = false
+	State.RefillESP = false
+	State.PlayerESP = false
+	State.NoFogEnabled = false
+	State.TitanEyesEnabled = false
+	State.PlayerNoTouch = false
+	State.V7Enabled = false
+	State.HandcutDisableEnabled = false
+	State.HandcutDeleteEnabled = false
+	State.GiveHandcutEnabled = false
+	State.HookRangeExtenderEnabled = false
+	State.TitanNullifierEnabled = false
+	State.AntiGrabV3Enabled = false
+	State.HorseStaminaEnabled = false
+	State.GearConfigEnabled = false
+	State.HitMultiEnabled = false
+	State.BladeReductionEnabled = false
+
+	pcall(function() BlatantRuntime.Stop() end)
+	pcall(function() HookRangeRuntime.Stop() end)
+	pcall(function() TitanNullifierRuntime.Stop() end)
+	pcall(function() AntiGrabRuntime.Stop() end)
+	pcall(function() HorseStaminaRuntime.Stop() end)
+	pcall(function() NoFogRuntime.Stop() end)
+	pcall(function() GearRuntime.Apply(readGearValues()) end)
+	pcall(function() ReworkRuntime.Apply() end)
+
+	espDetachAllTitans()
+	detachAllRefillESP()
+	detachAllPlayerESP()
+	safeDisconnectAll()
+
+	if gui then
+		gui:Destroy()
+	end
+end
+
+track(closeBtn.MouseButton1Click:Connect(function()
+	unload()
+end))
+
+track(searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	applyFeatureSearch()
+end))
+
+track(keybindButton.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	waitingForKeybind = true
+	refreshBindText()
+end))
+
+track(hideUiBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	gui.Enabled = false
+end))
+
+track(unloadBtn.MouseButton1Click:Connect(function()
+	unload()
+end))
+
+track(v7Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.V7Enabled = not State.V7Enabled
+	refresh()
+end))
+
+track(handcutDisableToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HandcutDisableEnabled = not State.HandcutDisableEnabled
+	refresh()
+end))
+
+track(handcutDeleteToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HandcutDeleteEnabled = not State.HandcutDeleteEnabled
+	pcall(function()
+		BlatantRuntime.RefreshDeleteHooks()
+	end)
+	refresh()
+end))
+
+track(giveHandcutToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.GiveHandcutEnabled = not State.GiveHandcutEnabled
+	refresh()
+end))
+
+track(v7ApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyV7Config()
+	refresh()
+end))
+
+track(v7ValueBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyV7Config()
+	refresh()
+end))
+
+track(napeToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.NapeEnabled = not State.NapeEnabled
+	patchAllTitans()
+	refresh()
+end))
+
+track(grabHBtoggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.DisableGrabHitboxes = not State.DisableGrabHitboxes
+	patchAllTitans()
+	refresh()
+end))
+
+track(napeXYZToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.NapeUseXYZ = not State.NapeUseXYZ
+	patchAllTitans()
+	refresh()
+end))
+
+track(applyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyMultiplier()
+	refresh()
+end))
+
+track(multBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyMultiplier()
+	refresh()
+end))
+
+track(napeXYZApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeXBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeYBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(napeZBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyNapeXYZConfig()
+	refresh()
+end))
+
+track(espToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.TitanESP = not State.TitanESP
+	if State.TitanESP then
+		task.spawn(function()
+			local done = 0
+			for _, rig in ipairs(TitansFolder:GetChildren()) do
+				if not State.TitanESP or unloaded then break end
+				espAttachTitan(rig)
+				done += 1
+				if done % 12 == 0 then
+					task.wait()
+				end
+			end
+			if State.TitanESP and not unloaded then
+				espApplyTitanTransparency()
+			end
+		end)
+	else
+		espDetachAllTitans()
+	end
+	refresh()
+end))
+
+track(refillToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.RefillESP = not State.RefillESP
+	if State.RefillESP then
+		for _, ch in ipairs(SpawnablesFolder:GetChildren()) do
+			if ch:IsA("Model") then
+				attachRefillESP(ch)
+			end
+		end
+		if SpawnablesSpawnedFolder then
+			for _, ch in ipairs(SpawnablesSpawnedFolder:GetChildren()) do
+				if ch:IsA("Model") then
+					attachRefillESP(ch)
+				end
+			end
+		end
+	else
+		detachAllRefillESP()
+	end
+	refresh()
+end))
+
+track(eyesToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.TitanEyesEnabled = not State.TitanEyesEnabled
+	patchAllTitans()
+	refresh()
+end))
+
+track(eyesApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyEyesConfig()
+	refresh()
+end))
+
+track(eyesMultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyEyesConfig()
+	refresh()
+end))
+
+track(plrEspToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.PlayerESP = not State.PlayerESP
+	refreshAllPlayerESP()
+	refresh()
+end))
+
+track(headExpandToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.PlayerHeadExpandEnabled = not State.PlayerHeadExpandEnabled
+	applyPlayerExpandAll()
+	refresh()
+end))
+
+track(torsoExpandToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.PlayerTorsoExpandEnabled = not State.PlayerTorsoExpandEnabled
+	applyPlayerExpandAll()
+	refresh()
+end))
+
+track(noTouchToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.PlayerNoTouch = not State.PlayerNoTouch
+	if State.PlayerNoTouch then
+		applyPlayerNoTouch()
+	else
+		restorePlayerNoTouch()
+	end
+	refresh()
+end))
+
+track(plrApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyPlayerConfig()
+	refresh()
+end))
+
+track(headMultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyPlayerConfig()
+	refresh()
+end))
+
+track(torsoMultBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyPlayerConfig()
+	refresh()
+end))
+
+track(noFogToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.NoFogEnabled = not State.NoFogEnabled
+	NoFogRuntime.Refresh()
+	refresh()
+end))
+
+track(hookRangeToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HookRangeExtenderEnabled = not State.HookRangeExtenderEnabled
+	refresh()
+end))
+
+track(hookRangeApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyHookRangeConfig()
+	refresh()
+end))
+
+track(hookRangeBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyHookRangeConfig()
+	refresh()
+end))
+
+track(titanNullifierToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.TitanNullifierEnabled = not State.TitanNullifierEnabled
+	refresh()
+end))
+
+track(antiGrabV3Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.AntiGrabV3Enabled = not State.AntiGrabV3Enabled
+	refresh()
+end))
+
+track(horseStaminaToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HorseStaminaEnabled = not State.HorseStaminaEnabled
+	refresh()
+end))
+
+track(horseStaminaApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyHorseStaminaConfig()
+	refresh()
+end))
+
+track(horseStaminaBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyHorseStaminaConfig()
+	refresh()
+end))
+
+track(gearToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.GearConfigEnabled = not State.GearConfigEnabled
+	applyGearConfig()
+	refresh()
+end))
+
+track(gearMasterBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.GearConfigEnabled = true
+	applyGearConfig()
+	refresh()
+end))
+
+track(gearApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyGearConfig()
+	refresh()
+end))
+
+for _, box in pairs(gearBoxes) do
+	track(box.FocusLost:Connect(function()
+		if unloaded then return end
+		if State.GearConfigEnabled then
+			applyGearConfig()
+		end
+	end))
+end
+
+track(hitMultiToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.HitMultiEnabled = not State.HitMultiEnabled
+	applyHitMulti()
+	refresh()
+end))
+
+track(hitMultiApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyHitMulti()
+	refresh()
+end))
+
+track(hitMultiBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyHitMulti()
+	refresh()
+end))
+
+track(bladeReductionToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.BladeReductionEnabled = not State.BladeReductionEnabled
+	applyBladeReduction()
+	refresh()
+end))
+
+track(bladeReductionApplyBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	applyBladeReduction()
+	refresh()
+end))
+
+track(bladeReductionBox.FocusLost:Connect(function()
+	if unloaded then return end
+	applyBladeReduction()
+	refresh()
+end))
+
+track(resetPos.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	main.Position = UDim2.fromScale(0.5, 0.5)
+end))
+
+do
+	local dragging = false
+	local dragStart, startPos
+
+	track(topBar.InputBegan:Connect(function(input)
+		if unloaded then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos = main.Position
+		end
+	end))
+
+	track(UserInputService.InputChanged:Connect(function(input)
+		if unloaded then return end
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - dragStart
+			main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end))
+
+	track(UserInputService.InputEnded:Connect(function(input)
+		if unloaded then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end))
+end
+
+local minimized = false
+local fullSize = main.Size
+
+track(minimizeBtn.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	minimized = not minimized
+	content.Visible = not minimized
+	side.Visible = not minimized
+	main.Size = minimized and UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, 34) or fullSize
+	minimizeBtn.Text = minimized and "+" or "–"
+end))
+
+track(UserInputService.InputBegan:Connect(function(input, gp)
+	if unloaded then return end
+	local focusedBox = UserInputService:GetFocusedTextBox()
+
+	if waitingForKeybind then
+		if input.UserInputType ~= Enum.UserInputType.Keyboard or input.KeyCode == Enum.KeyCode.Unknown then
+			return
+		end
+		if focusedBox then
+			focusedBox:ReleaseFocus()
+		end
+		State.ToggleKeybind = input.KeyCode
+		waitingForKeybind = false
+		refreshBindText()
+		return
+	end
+
+	if gp then return end
+	if focusedBox then return end
+
+	if input.KeyCode == State.ToggleKeybind then
+		gui.Enabled = not gui.Enabled
+		return
+	end
+end))
+
+setTabActive("Main")
+refreshBindText()
+refresh()
+applyPlayerExpandAll()
+refreshAllPlayerESP()
+if State.PlayerNoTouch then
+	applyPlayerNoTouch()
+end
