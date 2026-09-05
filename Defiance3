@@ -1603,6 +1603,8 @@ local waitingForKeybind = false
 local searchBox
 local keybindLabel
 local keybindButton
+local gearUi = {}
+local reworkUi = {}
 
 local gui = mk("ScreenGui", {
 	Name = "CheddarcheeseHub",
@@ -2566,7 +2568,8 @@ mk("TextLabel", {
 	Text = "ONLY USE WHEN HORSE IS SPAWNED",
 })
 
-local gearScroll = mk("ScrollingFrame", {
+do
+	local gearScroll = mk("ScrollingFrame", {
 	Parent = pageGear,
 	Position = UDim2.new(0, 0, 0, 0),
 	Size = UDim2.new(1, 0, 1, 0),
@@ -2579,10 +2582,10 @@ local gearScroll = mk("ScrollingFrame", {
 	ScrollingEnabled = true,
 })
 
-local boxGear = sectionBox(gearScroll, 16, 16, 460, 1040, "Gear GEN2")
-local gearToggle = toggleRow(boxGear, 44, "Gear Config")
-local gearBoxes = {}
-local gearOrder = {
+	local boxGear = sectionBox(gearScroll, 16, 16, 460, 1040, "Gear GEN2")
+	gearUi.Toggle = toggleRow(boxGear, 44, "Gear Config")
+	gearUi.Boxes = {}
+	gearUi.Order = {
 	"BaseSpeedBoost",
 	"MaximumVelocityScaling",
 	"ReelingVelocityGainMultiplier",
@@ -2618,16 +2621,16 @@ local gearOrder = {
 	"VelocityCapsByAcceleration",
 }
 
-local defaultGen2 = GearRuntime.GetDefaultGen2()
-for index, key in ipairs(gearOrder) do
-	local value = defaultGen2[key]
-	if type(value) == "table" then
-		value = table.concat(value, ",")
+	local defaultGen2 = GearRuntime.GetDefaultGen2()
+	for index, key in ipairs(gearUi.Order) do
+		local value = defaultGen2[key]
+		if type(value) == "table" then
+			value = table.concat(value, ",")
+		end
+		gearUi.Boxes[key] = inputRow(boxGear, 94 + index * 26, key, value, key == "GearName" and 170 or 150)
 	end
-	gearBoxes[key] = inputRow(boxGear, 94 + index * 26, key, value, key == "GearName" and 170 or 150)
-end
 
-local gearMasterBtn = mk("TextButton", {
+	gearUi.MasterButton = mk("TextButton", {
 	Parent = boxGear,
 	Position = UDim2.new(0, 18, 0, 82),
 	Size = UDim2.new(0, 407, 0, 28),
@@ -2639,10 +2642,10 @@ local gearMasterBtn = mk("TextButton", {
 	Text = "MASTER ENABLE",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = gearMasterBtn, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = gearMasterBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+	mk("UICorner", { Parent = gearUi.MasterButton, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = gearUi.MasterButton, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
 
-local gearApplyBtn = mk("TextButton", {
+	gearUi.ApplyButton = mk("TextButton", {
 	Parent = boxGear,
 	Position = UDim2.new(0, 18, 0, 985),
 	Size = UDim2.new(0, 407, 0, 28),
@@ -2654,13 +2657,13 @@ local gearApplyBtn = mk("TextButton", {
 	Text = "APPLY GEN2 CHANGES",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = gearApplyBtn, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = gearApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+	mk("UICorner", { Parent = gearUi.ApplyButton, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = gearUi.ApplyButton, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
 
-local boxRework = sectionBox(pageRework, 16, 16, 460, 260, "Rework")
-local hitMultiToggle = toggleRow(boxRework, 44, "Hit Multi")
-local hitMultiBox = inputRow(boxRework, 82, "Hit Multi Amount", State.HitMultiValue, 150)
-local hitMultiApplyBtn = mk("TextButton", {
+	local boxRework = sectionBox(pageRework, 16, 16, 460, 260, "Rework")
+	reworkUi.HitMultiToggle = toggleRow(boxRework, 44, "Hit Multi")
+	reworkUi.HitMultiBox = inputRow(boxRework, 82, "Hit Multi Amount", State.HitMultiValue, 150)
+	reworkUi.HitMultiApplyButton = mk("TextButton", {
 	Parent = boxRework,
 	Position = UDim2.new(0, 18, 0, 116),
 	Size = UDim2.new(0, 407, 0, 28),
@@ -2672,12 +2675,12 @@ local hitMultiApplyBtn = mk("TextButton", {
 	Text = "APPLY HIT MULTI",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = hitMultiApplyBtn, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = hitMultiApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+	mk("UICorner", { Parent = reworkUi.HitMultiApplyButton, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = reworkUi.HitMultiApplyButton, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
 
-local bladeReductionToggle = toggleRow(boxRework, 158, "SelfBlade Damage Reduction")
-local bladeReductionBox = inputRow(boxRework, 196, "Blade Multiplier", State.BladeReductionValue, 150)
-local bladeReductionApplyBtn = mk("TextButton", {
+	reworkUi.BladeReductionToggle = toggleRow(boxRework, 158, "SelfBlade Damage Reduction")
+	reworkUi.BladeReductionBox = inputRow(boxRework, 196, "Blade Multiplier", State.BladeReductionValue, 150)
+	reworkUi.BladeReductionApplyButton = mk("TextButton", {
 	Parent = boxRework,
 	Position = UDim2.new(0, 18, 0, 224),
 	Size = UDim2.new(0, 407, 0, 28),
@@ -2689,8 +2692,9 @@ local bladeReductionApplyBtn = mk("TextButton", {
 	Text = "APPLY BLADE REDUCTION",
 	AutoButtonColor = false,
 })
-mk("UICorner", { Parent = bladeReductionApplyBtn, CornerRadius = UDim.new(0, 8) })
-mk("UIStroke", { Parent = bladeReductionApplyBtn, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+	mk("UICorner", { Parent = reworkUi.BladeReductionApplyButton, CornerRadius = UDim.new(0, 8) })
+	mk("UIStroke", { Parent = reworkUi.BladeReductionApplyButton, Color = COL_STROKE_SOFT, Thickness = 1, Transparency = 0.28 })
+end
 
 local tabButtons = {}
 
@@ -2794,8 +2798,8 @@ end
 local function readGearValues()
 	local defaults = GearRuntime.GetDefaultGen2()
 	local values = {}
-	for _, key in ipairs(gearOrder) do
-		values[key] = parseGearValue(key, gearBoxes[key].Text, defaults[key])
+	for _, key in ipairs(gearUi.Order) do
+		values[key] = parseGearValue(key, gearUi.Boxes[key].Text, defaults[key])
 	end
 	return values
 end
@@ -2806,22 +2810,22 @@ local function applyGearConfig()
 end
 
 local function applyHitMulti()
-	local value = tonumber(hitMultiBox.Text)
+	local value = tonumber(reworkUi.HitMultiBox.Text)
 	if not value then
 		value = State.HitMultiValue
 	end
 	State.HitMultiValue = math.clamp(math.floor(value + 0.5), 1, 20)
-	hitMultiBox.Text = tostring(State.HitMultiValue)
+	reworkUi.HitMultiBox.Text = tostring(State.HitMultiValue)
 	ReworkRuntime.Apply()
 end
 
 local function applyBladeReduction()
-	local value = tonumber(bladeReductionBox.Text)
+	local value = tonumber(reworkUi.BladeReductionBox.Text)
 	if not value then
 		value = State.BladeReductionValue
 	end
 	State.BladeReductionValue = math.clamp(value, 0, 1)
-	bladeReductionBox.Text = tostring(State.BladeReductionValue)
+	reworkUi.BladeReductionBox.Text = tostring(State.BladeReductionValue)
 	ReworkRuntime.Apply()
 end
 
@@ -2967,9 +2971,9 @@ local function refresh()
 	setToggle(titanNullifierToggle, State.TitanNullifierEnabled)
 	setToggle(antiGrabV3Toggle, State.AntiGrabV3Enabled)
 	setToggle(horseStaminaToggle, State.HorseStaminaEnabled)
-	setToggle(gearToggle, State.GearConfigEnabled)
-	setToggle(hitMultiToggle, State.HitMultiEnabled)
-	setToggle(bladeReductionToggle, State.BladeReductionEnabled)
+	setToggle(gearUi.Toggle, State.GearConfigEnabled)
+	setToggle(reworkUi.HitMultiToggle, State.HitMultiEnabled)
+	setToggle(reworkUi.BladeReductionToggle, State.BladeReductionEnabled)
 
 	v7ValueBox.Text = tostring(State.V7Value)
 
@@ -2984,8 +2988,8 @@ local function refresh()
 	torsoMultBox.Text = tostring(State.PlayerTorsoMult)
 	hookRangeBox.Text = tostring(State.HookRangeValue)
 	horseStaminaBox.Text = horseStaminaBox.Text == "" and "99999" or horseStaminaBox.Text
-	hitMultiBox.Text = tostring(State.HitMultiValue)
-	bladeReductionBox.Text = tostring(State.BladeReductionValue)
+	reworkUi.HitMultiBox.Text = tostring(State.HitMultiValue)
+	reworkUi.BladeReductionBox.Text = tostring(State.BladeReductionValue)
 
 	refreshBindText()
 
@@ -3358,27 +3362,27 @@ track(horseStaminaBox.FocusLost:Connect(function()
 	refresh()
 end))
 
-track(gearToggle.MouseButton1Click:Connect(function()
+track(gearUi.Toggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.GearConfigEnabled = not State.GearConfigEnabled
 	applyGearConfig()
 	refresh()
 end))
 
-track(gearMasterBtn.MouseButton1Click:Connect(function()
+track(gearUi.MasterButton.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.GearConfigEnabled = true
 	applyGearConfig()
 	refresh()
 end))
 
-track(gearApplyBtn.MouseButton1Click:Connect(function()
+track(gearUi.ApplyButton.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	applyGearConfig()
 	refresh()
 end))
 
-for _, box in pairs(gearBoxes) do
+for _, box in pairs(gearUi.Boxes) do
 	track(box.FocusLost:Connect(function()
 		if unloaded then return end
 		if State.GearConfigEnabled then
@@ -3387,39 +3391,39 @@ for _, box in pairs(gearBoxes) do
 	end))
 end
 
-track(hitMultiToggle.MouseButton1Click:Connect(function()
+track(reworkUi.HitMultiToggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.HitMultiEnabled = not State.HitMultiEnabled
 	applyHitMulti()
 	refresh()
 end))
 
-track(hitMultiApplyBtn.MouseButton1Click:Connect(function()
+track(reworkUi.HitMultiApplyButton.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	applyHitMulti()
 	refresh()
 end))
 
-track(hitMultiBox.FocusLost:Connect(function()
+track(reworkUi.HitMultiBox.FocusLost:Connect(function()
 	if unloaded then return end
 	applyHitMulti()
 	refresh()
 end))
 
-track(bladeReductionToggle.MouseButton1Click:Connect(function()
+track(reworkUi.BladeReductionToggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.BladeReductionEnabled = not State.BladeReductionEnabled
 	applyBladeReduction()
 	refresh()
 end))
 
-track(bladeReductionApplyBtn.MouseButton1Click:Connect(function()
+track(reworkUi.BladeReductionApplyButton.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	applyBladeReduction()
 	refresh()
 end))
 
-track(bladeReductionBox.FocusLost:Connect(function()
+track(reworkUi.BladeReductionBox.FocusLost:Connect(function()
 	if unloaded then return end
 	applyBladeReduction()
 	refresh()
