@@ -17,7 +17,7 @@ local LiveFolder = workspace:FindFirstChild("Live")
 
 local State = {
 	NapeEnabled = true,
-	NapeMult = 2,
+	NapeMult = 1.8,
 	NapeUseXYZ = false,
 	NapeScaleX = 1,
 	NapeScaleY = 1,
@@ -54,7 +54,7 @@ local State = {
 	HorseStaminaEnabled = false,
 	NoFogEnabled = false,
 	ToggleKeybind = Enum.KeyCode.LeftAlt,
-	GearConfigEnabled = false,
+	GearConfigEnabled = true,
 }
 
 local Connections = {}
@@ -1517,7 +1517,7 @@ do
 		UpSpeedBaseTwo = 90,
 		GasBoostVelocityCapBypass = 25,
 		ReelingVelocityCapBypass = 12,
-		VelocityCapsByAcceleration = {295, 295, 295, 295, 295},
+		VelocityCapsByAcceleration = {305, 305, 305, 305, 305},
 	}
 
 	local function cloneTable(value)
@@ -2784,9 +2784,9 @@ local function applyMultiplier()
 		multBox.Text = tostring(State.NapeMult)
 		return
 	end
-	n = math.floor(n + 0.5)
 	n = math.clamp(n, 1, 30)
 	State.NapeMult = n
+	multBox.Text = tostring(State.NapeMult)
 	patchAllTitans()
 end
 
