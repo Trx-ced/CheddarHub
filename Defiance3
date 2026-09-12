@@ -49,7 +49,7 @@ local State = {
 
 	HookRangeExtenderEnabled = true,
 	HookRangeValue = 1200,
-	TitanNullifierEnabled = true,
+	TitanNullifierEnabled = false,
 	AntiGrabV3Enabled = false,
 	HorseStaminaEnabled = false,
 	NoFogEnabled = false,
