@@ -30,6 +30,7 @@ local State = {
 	RefillESP = false,
 
 	PlayerESP = false,
+	LocalHorseMarkerEnabled = true,
 	PlayerESPTransparency = 0,
 	PlayerHeadExpandEnabled = false,
 	PlayerHeadMult = 5,
@@ -706,9 +707,141 @@ track(RunService.RenderStepped:Connect(function()
 	end
 end))
 
+local detachAllPlayerESP
+local refreshAllPlayerESP
+
+do
 local activeESPs = {}
 local pendingESPs = {}
 local playerEspWatch = {}
+
+local function isHorseModel(model)
+	return model and model:IsA("Model") and string.sub(model.Name, -5) == "Horse"
+end
+
+local function normalizeName(value)
+	return tostring(value or ""):lower():gsub("%s+", "")
+end
+
+local function getHorseOwnerName(model)
+	if not isHorseModel(model) then
+		return ""
+	end
+
+	return string.sub(model.Name, 1, #model.Name - 5)
+end
+
+local function localCharacterOwnsSeat(model)
+	local character = player.Character
+	if not character then
+		return false
+	end
+
+	local characterHumanoid = character:FindFirstChildOfClass("Humanoid")
+	if not characterHumanoid then
+		return false
+	end
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("Seat") or descendant:IsA("VehicleSeat") then
+			if descendant.Occupant == characterHumanoid then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+local function isLocalPlayerHorse(model)
+	if not isHorseModel(model) then
+		return false
+	end
+
+	if localCharacterOwnsSeat(model) then
+		return true
+	end
+
+	local ownerName = normalizeName(getHorseOwnerName(model))
+	local character = player.Character
+	local characterFullName = character and character:GetAttribute("FullName")
+	local fullNameFirstPart = characterFullName and string.split(tostring(characterFullName), "|")[1] or nil
+	local possibleNames = {
+		player.Name,
+		player.DisplayName,
+		character and character.Name,
+		fullNameFirstPart,
+	}
+
+	for _, possibleName in ipairs(possibleNames) do
+		if ownerName ~= "" and ownerName == normalizeName(possibleName) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function getModelDisplayName(model)
+	if isLocalPlayerHorse(model) then
+		return "Your Horse"
+	end
+
+	return model.Name
+end
+
+local function getEspBranch(model)
+	return tostring(model:GetAttribute("Branch") or "Unknown")
+end
+
+local function getEspNation(model)
+	return tostring(model:GetAttribute("Nation") or "Unknown")
+end
+
+local function getHealthColor(humanoid)
+	local maxHealth = math.max(1, humanoid.MaxHealth)
+	local healthPercent = math.clamp(humanoid.Health / maxHealth, 0, 1)
+
+	if healthPercent > 0.8 then
+		return Color3.fromRGB(75, 255, 95)
+	elseif healthPercent > 0.6 then
+		return Color3.fromRGB(255, 235, 75)
+	elseif healthPercent >= 0.2 then
+		return Color3.fromRGB(255, 150, 45)
+	end
+
+	return Color3.fromRGB(255, 55, 55)
+end
+
+local function makeEspBillboard(name, adornee, size, offset, textColor, strokeColor, textSize)
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = name
+	billboard.Adornee = adornee
+	billboard.Size = size
+	billboard.StudsOffset = offset
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = 5000
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.TextColor3 = textColor
+	textLabel.TextStrokeTransparency = 0
+	textLabel.TextStrokeColor3 = strokeColor
+	textLabel.Font = Enum.Font.SourceSansBold
+	textLabel.TextSize = textSize
+	textLabel.Parent = billboard
+
+	billboard.Parent = adornee
+	return billboard, textLabel
+end
+
+local function getModelAdornee(model)
+	return model:FindFirstChild("Head")
+		or model:FindFirstChild("HumanoidRootPart")
+		or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart")
+end
 
 local function destroyESP(model)
 	local info = activeESPs[model]
@@ -724,6 +857,16 @@ local function destroyESP(model)
 			info.Billboard:Destroy()
 		end)
 	end
+	if info.StaffBillboard then
+		pcall(function()
+			info.StaffBillboard:Destroy()
+		end)
+	end
+	if info.HorseMarkerBillboard then
+		pcall(function()
+			info.HorseMarkerBillboard:Destroy()
+		end)
+	end
 	if playerEspWatch[model] then
 		pcall(function()
 			playerEspWatch[model]:Disconnect()
@@ -736,14 +879,17 @@ end
 local function setupESP(model)
 	if not State.PlayerESP then return end
 	if not (model and model:IsA("Model")) then return end
+	if isHorseModel(model) and not isLocalPlayerHorse(model) then return end
 	if activeESPs[model] or pendingESPs[model] then return end
 
 	pendingESPs[model] = true
 
-	local head = model:FindFirstChild("Head")
+	local isLocalHorse = isLocalPlayerHorse(model)
 	local humanoid = model:FindFirstChild("Humanoid")
 	local rootPart = model:FindFirstChild("HumanoidRootPart")
-	if not head or not humanoid or not rootPart then
+	local adornee = getModelAdornee(model)
+	rootPart = rootPart or model.PrimaryPart or adornee
+	if not adornee or not rootPart or (not isLocalHorse and not humanoid) then
 		pendingESPs[model] = nil
 		if not playerEspWatch[model] then
 			playerEspWatch[model] = track(model.ChildAdded:Connect(function()
@@ -760,41 +906,74 @@ local function setupESP(model)
 		playerEspWatch[model] = nil
 	end
 
-	local oldBillboard = head:FindFirstChild("LiveESP")
+	local oldBillboard = adornee:FindFirstChild("LiveESP")
 	if oldBillboard then
 		oldBillboard:Destroy()
 	end
+	local oldStaffBillboard = adornee:FindFirstChild("LiveESP_Staff")
+	if oldStaffBillboard then
+		oldStaffBillboard:Destroy()
+	end
+	local oldHorseMarker = adornee:FindFirstChild("LiveESP_HorseMarker")
+	if oldHorseMarker then
+		oldHorseMarker:Destroy()
+	end
 
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "LiveESP"
-	billboard.Adornee = head
-	billboard.Size = UDim2.new(0, 200, 0, 60)
-	billboard.StudsOffset = Vector3.new(0, 3, 0)
-	billboard.AlwaysOnTop = true
-	billboard.MaxDistance = 5000
+	local billboard, textLabel = makeEspBillboard(
+		"LiveESP",
+		adornee,
+		isLocalHorse and UDim2.new(0, 360, 0, 34) or UDim2.new(0, 680, 0, 34),
+		Vector3.new(0, 3, 0),
+		Color3.fromRGB(255, 255, 255),
+		isLocalHorse and Color3.fromRGB(255, 205, 45) or Color3.fromRGB(0, 0, 0),
+		isLocalHorse and 18 or 17
+	)
 
-	local textLabel = Instance.new("TextLabel")
-	textLabel.Size = UDim2.new(1, 0, 1, 0)
-	textLabel.BackgroundTransparency = 1
-	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	textLabel.TextStrokeTransparency = 0
-	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	textLabel.Font = Enum.Font.SourceSansBold
-	textLabel.TextSize = 15
-	textLabel.Parent = billboard
+	local horseMarkerBillboard = nil
+	local horseMarkerLabel = nil
+	if isLocalHorse and State.LocalHorseMarkerEnabled then
+		horseMarkerBillboard, horseMarkerLabel = makeEspBillboard(
+			"LiveESP_HorseMarker",
+			adornee,
+			UDim2.new(0, 430, 0, 42),
+			Vector3.new(0, 60, 0),
+			Color3.fromRGB(255, 255, 255),
+			Color3.fromRGB(255, 205, 45),
+			20
+		)
+	end
 
-	billboard.Parent = head
+	local staffBillboard = nil
+	local staffLabel = nil
+	if getEspBranch(model) == "Staff" and not isLocalHorse then
+		staffBillboard, staffLabel = makeEspBillboard(
+			"LiveESP_Staff",
+			adornee,
+			UDim2.new(0, 180, 0, 35),
+			Vector3.new(0, 60, 0),
+			Color3.fromRGB(255, 255, 255),
+			Color3.fromRGB(255, 0, 0),
+			22
+		)
+		staffLabel.Text = "STAFF"
+	end
 
 	activeESPs[model] = {
 		Billboard = billboard,
 		Label = textLabel,
+		HorseMarkerBillboard = horseMarkerBillboard,
+		HorseMarkerLabel = horseMarkerLabel,
+		StaffBillboard = staffBillboard,
+		StaffLabel = staffLabel,
 		Humanoid = humanoid,
-		RootPart = rootPart
+		RootPart = rootPart,
+		Adornee = adornee,
+		IsLocalHorse = isLocalHorse
 	}
 	pendingESPs[model] = nil
 end
 
-local function detachAllPlayerESP()
+detachAllPlayerESP = function()
 	for model in pairs(activeESPs) do
 		destroyESP(model)
 	end
@@ -807,7 +986,7 @@ local function detachAllPlayerESP()
 	table.clear(pendingESPs)
 end
 
-local function refreshAllPlayerESP()
+refreshAllPlayerESP = function()
 	if not State.PlayerESP then
 		detachAllPlayerESP()
 		return
@@ -859,23 +1038,86 @@ track(RunService.RenderStepped:Connect(function()
 		local rootPart = info.RootPart
 		local billboard = info.Billboard
 		local label = info.Label
-		if not model:IsDescendantOf(Workspace) or not humanoid or humanoid.Health <= 0 or not rootPart or not billboard or not billboard.Parent then
+		local invalidHumanoid = (not info.IsLocalHorse) and (not humanoid or humanoid.Health <= 0)
+		if not model:IsDescendantOf(Workspace) or invalidHumanoid or not rootPart or not billboard or not billboard.Parent then
 			destroyESP(model)
 		else
 			local distance = 0
 			if camera then
 				distance = (camera.CFrame.Position - rootPart.Position).Magnitude
 			end
-			label.Text = string.format(
-				"Name: %s\nHealth: %d/%d\nDistance: %d studs",
-				model.Name,
-				math.max(0, math.floor(humanoid.Health)),
-				math.floor(humanoid.MaxHealth),
-				math.floor(distance)
-			)
+			if info.IsLocalHorse then
+				label.Text = string.format("%s   |   %d studs", model.Name, math.floor(distance))
+				label.TextColor3 = Color3.fromRGB(255, 255, 255)
+				label.TextStrokeColor3 = Color3.fromRGB(255, 205, 45)
+				if State.LocalHorseMarkerEnabled and not info.HorseMarkerBillboard and info.Adornee then
+					local horseMarkerBillboard, horseMarkerLabel = makeEspBillboard(
+						"LiveESP_HorseMarker",
+						info.Adornee,
+						UDim2.new(0, 430, 0, 42),
+						Vector3.new(0, 60, 0),
+						Color3.fromRGB(255, 255, 255),
+						Color3.fromRGB(255, 205, 45),
+						20
+					)
+					info.HorseMarkerBillboard = horseMarkerBillboard
+					info.HorseMarkerLabel = horseMarkerLabel
+				elseif not State.LocalHorseMarkerEnabled and info.HorseMarkerBillboard then
+					info.HorseMarkerBillboard:Destroy()
+					info.HorseMarkerBillboard = nil
+					info.HorseMarkerLabel = nil
+				end
+				if info.HorseMarkerLabel then
+					info.HorseMarkerLabel.Text = string.format("YOUR HORSE IS HERE   |   %d studs", math.floor(distance))
+					info.HorseMarkerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+					info.HorseMarkerLabel.TextStrokeColor3 = Color3.fromRGB(255, 205, 45)
+				end
+			else
+				label.Text = string.format(
+					"%s   |   %d/%d HP   |   %d studs   |   %s   |   %s",
+					getModelDisplayName(model),
+					math.max(0, math.floor(humanoid.Health)),
+					math.floor(humanoid.MaxHealth),
+					math.floor(distance),
+					getEspBranch(model),
+					getEspNation(model)
+				)
+				label.TextColor3 = getHealthColor(humanoid)
+				label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+			end
+
+			if info.StaffLabel then
+				info.StaffLabel.Text = "STAFF"
+				info.StaffLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+				info.StaffLabel.TextStrokeColor3 = Color3.fromRGB(255, 0, 0)
+			end
+
+			if not info.IsLocalHorse then
+				local isStaff = getEspBranch(model) == "Staff"
+				if isStaff and not info.StaffBillboard and info.Adornee then
+					local staffBillboard, staffLabel = makeEspBillboard(
+						"LiveESP_Staff",
+						info.Adornee,
+						UDim2.new(0, 180, 0, 35),
+						Vector3.new(0, 60, 0),
+						Color3.fromRGB(255, 255, 255),
+						Color3.fromRGB(255, 0, 0),
+						22
+					)
+					staffLabel.Text = "STAFF"
+					info.StaffBillboard = staffBillboard
+					info.StaffLabel = staffLabel
+				elseif not isStaff and info.StaffBillboard then
+					info.StaffBillboard:Destroy()
+					info.StaffBillboard = nil
+					info.StaffLabel = nil
+				end
+			end
 		end
 	end
 end))
+
+end
 
 local SafeFall = {}
 function SafeFall.Setup()
@@ -2310,13 +2552,14 @@ mk("UICorner", { Parent = eyesApplyBtn, CornerRadius = UDim.new(0, 8) })
 
 local boxP = sectionBox(pagePlayers, 16, 16, 460, 340, "Players")
 local plrEspToggle = toggleRow(boxP, 44, "Player ESP")
-local headExpandToggle = toggleRow(boxP, 78, "Expand Head")
-local torsoExpandToggle = toggleRow(boxP, 112, "Expand Torso")
-local noTouchToggle = toggleRow(boxP, 146, "Player NoTouch")
+local localHorseMarkerToggle = toggleRow(boxP, 78, "Your Horse Marker")
+local headExpandToggle = toggleRow(boxP, 112, "Expand Head")
+local torsoExpandToggle = toggleRow(boxP, 146, "Expand Torso")
+local noTouchToggle = toggleRow(boxP, 180, "Player NoTouch")
 
 mk("TextLabel", {
 	Parent = boxP,
-	Position = UDim2.new(0, 12, 0, 184),
+	Position = UDim2.new(0, 12, 0, 218),
 	Size = UDim2.new(0, 180, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -2328,7 +2571,7 @@ mk("TextLabel", {
 
 local headMultBox = mk("TextBox", {
 	Parent = boxP,
-	Position = UDim2.new(0, 12, 0, 202),
+	Position = UDim2.new(0, 12, 0, 236),
 	Size = UDim2.new(0, 140, 0, 22),
 	BackgroundColor3 = COL_INPUT,
 	TextColor3 = COL_TEXT,
@@ -2343,7 +2586,7 @@ mk("UIStroke", { Parent = headMultBox, Color = COL_STROKE_SOFT, Thickness = 1, T
 
 mk("TextLabel", {
 	Parent = boxP,
-	Position = UDim2.new(0, 180, 0, 184),
+	Position = UDim2.new(0, 180, 0, 218),
 	Size = UDim2.new(0, 180, 0, 16),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -2355,7 +2598,7 @@ mk("TextLabel", {
 
 local torsoMultBox = mk("TextBox", {
 	Parent = boxP,
-	Position = UDim2.new(0, 180, 0, 202),
+	Position = UDim2.new(0, 180, 0, 236),
 	Size = UDim2.new(0, 140, 0, 22),
 	BackgroundColor3 = COL_INPUT,
 	TextColor3 = COL_TEXT,
@@ -2370,7 +2613,7 @@ mk("UIStroke", { Parent = torsoMultBox, Color = COL_STROKE_SOFT, Thickness = 1, 
 
 local plrApplyBtn = mk("TextButton", {
 	Parent = boxP,
-	Position = UDim2.new(0, 336, 0, 202),
+	Position = UDim2.new(0, 336, 0, 236),
 	Size = UDim2.new(0, 106, 0, 22),
 	BackgroundColor3 = COL_PURP,
 	TextColor3 = COL_TEXT,
@@ -2910,6 +3153,7 @@ local function refresh()
 	setToggle(eyesToggle, State.TitanEyesEnabled)
 
 	setToggle(plrEspToggle, State.PlayerESP)
+	setToggle(localHorseMarkerToggle, State.LocalHorseMarkerEnabled)
 	setToggle(headExpandToggle, State.PlayerHeadExpandEnabled)
 	setToggle(torsoExpandToggle, State.PlayerTorsoExpandEnabled)
 	setToggle(noTouchToggle, State.PlayerNoTouch)
@@ -3203,6 +3447,12 @@ track(plrEspToggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.PlayerESP = not State.PlayerESP
 	refreshAllPlayerESP()
+	refresh()
+end))
+
+track(localHorseMarkerToggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.LocalHorseMarkerEnabled = not State.LocalHorseMarkerEnabled
 	refresh()
 end))
 
