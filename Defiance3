@@ -17,7 +17,7 @@ local LiveFolder = workspace:FindFirstChild("Live")
 
 local State = {
 	NapeEnabled = true,
-	NapeMult = 1.8,
+	NapeMult = 1.45,
 	NapeUseXYZ = false,
 	NapeScaleX = 1,
 	NapeScaleY = 1,
@@ -39,7 +39,7 @@ local State = {
 	PlayerNoTouch = false,
 
 	TitanEyesEnabled = true,
-	TitanEyesMult = 1.45,
+	TitanEyesMult = 1.15,
 
 
 	V7Enabled = false,
@@ -49,7 +49,7 @@ local State = {
 	GiveHandcutEnabled = false,
 
 	HookRangeExtenderEnabled = true,
-	HookRangeValue = 1200,
+	HookRangeValue = 600,
 	TitanNullifierEnabled = true,
 	AntiGrabV3Enabled = false,
 	HorseStaminaEnabled = false,
