@@ -17,7 +17,7 @@ local LiveFolder = workspace:FindFirstChild("Live")
 
 local State = {
 	NapeEnabled = true,
-	NapeMult = 1.7,
+	NapeMult = 2,
 	NapeUseXYZ = false,
 	NapeScaleX = 1,
 	NapeScaleY = 1,
@@ -39,7 +39,7 @@ local State = {
 	PlayerNoTouch = false,
 
 	TitanEyesEnabled = true,
-	TitanEyesMult = 1.35,
+	TitanEyesMult = 1.45,
 
 
 	V7Enabled = false,
@@ -1736,14 +1736,14 @@ do
 		RangeScaling = 100,
 		BaseVelocityGainMultiplierBoosting = 1.7,
 		GearName = "3DMG",
-		VeloCap = 300,
+		VeloCap = 400,
 		BaseVelocityGainGrounded = 5,
 		GasIntakeBase = 0.35,
-		BaseVelocityGain = 2,
+		BaseVelocityGain = 6,
 		TurnSpeedScaling = 5,
 		BoostUpSpeedMultiplier = 1.4,
 		BoostTurnSpeedMultiplier = 1.4,
-		MaxTurnSpeed = 200,
+		MaxTurnSpeed = 300,
 		UpSpeedScaling = 5,
 		UpSpeedMaximumTwo = 85,
 		VelocityMultiplier = 1,
@@ -1759,7 +1759,7 @@ do
 		UpSpeedBaseTwo = 90,
 		GasBoostVelocityCapBypass = 25,
 		ReelingVelocityCapBypass = 12,
-		VelocityCapsByAcceleration = {340, 340, 340, 340, 340},
+		VelocityCapsByAcceleration = {375, 375, 375, 375, 375},
 	}
 
 	local function cloneTable(value)
