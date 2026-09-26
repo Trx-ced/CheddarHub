@@ -56,6 +56,9 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	NapeNoFrontEnabled = false,
 	VisualizeTitanNape = false,
 	EyeEnabled = false,
+	EyeMultiplierEnabled = false,
+	EyeMultiplier = 1.25,
+	VisualizeTitanEyes = false,
 	EyeSize = Vector3.new(13, 13, 13),
 	EyeOffset = Vector3.new(0, 7, 0),
 	NullifyEnabled = false,
@@ -92,6 +95,7 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	NoFallDamageEnabled = false,
 	TemperatureNullifierEnabled = false,
 	NoFogEnabled = false,
+	NoScreenShakeEnabled = false,
 	BrightnessEnabled = false,
 	BrightnessValue = 3,
 	VelocityCapperEnabled = false,
@@ -135,6 +139,8 @@ local syncConfigInputs = function() end
 local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"NapeEnabled",
 	"EyeEnabled",
+	"EyeMultiplierEnabled",
+	"VisualizeTitanEyes",
 	"NullifyEnabled",
 	"AttributesEnabled",
 	"ODMGAttributesEnabled",
@@ -144,6 +150,7 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"NapeNoFrontEnabled",
 	"VisualizeTitanNape",
 	"NoFogEnabled",
+	"NoScreenShakeEnabled",
 	"BrightnessEnabled",
 	"VelocityCapperEnabled",
 	"FOVLockEnabled",
@@ -430,6 +437,16 @@ Config.NapeMultiplierEnabled = Config.NapeMultiplierEnabled == true
 Config.NapeMultiplier = math.clamp(tonumber(Config.NapeMultiplier) or 1.25, 0.05, 100)
 Config.NapeNoFrontEnabled = Config.NapeNoFrontEnabled == true
 Config.VisualizeTitanNape = Config.VisualizeTitanNape == true
+Config.EyeMultiplierEnabled = Config.EyeMultiplierEnabled == true
+Config.EyeMultiplier = math.clamp(tonumber(Config.EyeMultiplier) or 1.25, 1, 100)
+for _, prefix in ipairs({"Nape", "Eye"}) do
+	for _, axis in ipairs({"Across", "Depth", "Down"}) do
+		local key = prefix .. axis .. "Multiplier"
+		Config[key] = math.clamp(tonumber(Config[key]) or Config[prefix .. "Multiplier"], 1, 100)
+	end
+end
+Config.EyeMinimumDepth = math.clamp(tonumber(Config.EyeMinimumDepth) or 1, 0.05, 100)
+Config.VisualizeTitanEyes = Config.VisualizeTitanEyes == true
 Config.NoFallDamageEnabled = Config.NoFallDamageEnabled or false
 Config.TemperatureNullifierEnabled = Config.TemperatureNullifierEnabled == true
 Config.NoFogEnabled = Config.NoFogEnabled == true
@@ -736,6 +753,87 @@ end
 
 
 local NapeFeature = {}
+NapeFeature.ShakePatchKey = "CheddarHubCameraShakePatch_" .. HUB_PROFILE
+
+function NapeFeature.RestoreScreenShake()
+	local patch = _G[NapeFeature.ShakePatchKey]
+	if not patch then return end
+	for name, original in pairs(patch.Originals) do
+		if patch.Module[name] == patch.Wrappers[name] then
+			patch.Module[name] = original
+		end
+	end
+	_G[NapeFeature.ShakePatchKey] = nil
+end
+
+function NapeFeature.SetScreenShake(enabled)
+	Config.NoScreenShakeEnabled = enabled == true
+	NapeFeature.RestoreScreenShake()
+	if not Config.NoScreenShakeEnabled then return end
+	local assets = ReplicatedStorage:FindFirstChild("ReplicatedAssets")
+	local modules = assets and assets:FindFirstChild("GlobalModules")
+	local module = modules and modules:FindFirstChild("CameraShaker")
+	local instanceModule = module and module:FindFirstChild("CameraShakeInstance")
+	if not module or not instanceModule then
+		warn("[No Screen Shake] CameraShaker modules are not available yet.")
+		return
+	end
+	local success, shaker, shakeInstance = pcall(function()
+		return require(module), require(instanceModule)
+	end)
+	if not success or type(shaker) ~= "table" or type(shakeInstance) ~= "table" then
+		warn("[No Screen Shake] Could not load CameraShaker:", shaker)
+		return
+	end
+	local patch = {Module = shaker, Originals = {}, Wrappers = {}}
+	local function clearShake(self)
+		self._posAddShake = Vector3.zero
+		self._rotAddShake = Vector3.zero
+		if type(self._camShakeInstances) == "table" then table.clear(self._camShakeInstances) end
+		if type(self._removeInstances) == "table" then table.clear(self._removeInstances) end
+	end
+	local function dummyShake()
+		local dummy = shakeInstance.new(0, 0, 0, 0)
+		dummy.Magnitude = 0
+		dummy.Roughness = 0
+		dummy.PositionInfluence = Vector3.zero
+		dummy.RotationInfluence = Vector3.zero
+		dummy.currentFadeTime = 0
+		dummy.sustain = false
+		return dummy
+	end
+	for _, name in ipairs({"_Step", "_ComputeCFrame", "Shake", "ShakeSustain", "ShakeOnce", "StartShake"}) do
+		local original = shaker[name]
+		if type(original) == "function" then
+			patch.Originals[name] = original
+			local wrapper
+			if name == "_Step" then
+				wrapper = function(self) clearShake(self) end
+			elseif name == "_ComputeCFrame" then
+				wrapper = function() return CFrame.identity end
+			else
+				wrapper = function() return dummyShake() end
+			end
+			patch.Wrappers[name] = wrapper
+			shaker[name] = wrapper
+		end
+	end
+	_G[NapeFeature.ShakePatchKey] = patch
+	-- Clear active shaker instances without permanently hooking shared functions.
+	if type(getgc) == "function" then
+		local ok, objects = pcall(getgc, true)
+		if ok and type(objects) == "table" then
+			for _, object in pairs(objects) do
+				if type(object) == "table" and type(rawget(object, "_camShakeInstances")) == "table" then
+					pcall(clearShake, object)
+				end
+			end
+		end
+	end
+end
+
+-- Restore a previous run's patch before this run applies its saved toggle.
+NapeFeature.RestoreScreenShake()
 _G["CheddarHubTitanHitboxState_" .. HUB_PROFILE] = _G["CheddarHubTitanHitboxState_" .. HUB_PROFILE]
 	or setmetatable({}, { __mode = "k" })
 NapeFeature.State = _G["CheddarHubTitanHitboxState_" .. HUB_PROFILE]
@@ -757,6 +855,15 @@ function NapeFeature.GetOriginalSize(part)
 	return originalSize
 end
 
+function NapeFeature.GetOriginalFrame(part, root)
+	local originalFrame = part:GetAttribute("CheddarOriginalHitboxFrame")
+	if typeof(originalFrame) ~= "CFrame" then
+		originalFrame = root.CFrame:ToObjectSpace(part.CFrame)
+		part:SetAttribute("CheddarOriginalHitboxFrame", originalFrame)
+	end
+	return originalFrame
+end
+
 function NapeFeature.FindNape(titanModel)
 	if not titanModel or not titanModel:IsA("Model") then
 		return nil
@@ -773,6 +880,7 @@ function NapeFeature.UpdateVisualization(titanModel)
 	if not titanModel or not titanModel:IsA("Model") then
 		return
 	end
+	NapeFeature.UpdateEyeVisualization(titanModel)
 
 	local visual = titanModel:FindFirstChild("CheddarNapeVisual", true)
 	local nape = NapeFeature.FindNape(titanModel)
@@ -799,6 +907,45 @@ function NapeFeature.UpdateVisualization(titanModel)
 	end
 end
 
+function NapeFeature.GetEyes(titanModel)
+	local parts = {}
+	local damagePoints = titanModel:FindFirstChild("DamagePoints")
+	local eyes = damagePoints and (damagePoints:FindFirstChild("Eyes") or damagePoints:FindFirstChild("Eye"))
+	if eyes then
+		if eyes:IsA("BasePart") then
+			table.insert(parts, eyes)
+		else
+			for _, part in ipairs(eyes:GetDescendants()) do
+				if part:IsA("BasePart") then table.insert(parts, part) end
+			end
+		end
+	end
+	return parts
+end
+
+function NapeFeature.UpdateEyeVisualization(titanModel)
+	for _, eye in ipairs(NapeFeature.GetEyes(titanModel)) do
+		local visual = eye:FindFirstChild("CheddarEyeVisual")
+		if Config.VisualizeTitanEyes then
+			if not visual then
+				visual = Instance.new("BoxHandleAdornment")
+				visual.Name = "CheddarEyeVisual"
+				visual.Color3 = Color3.fromRGB(40, 120, 255)
+				visual.Transparency = 0.45
+				visual.AlwaysOnTop = true
+				visual.ZIndex = 10
+				visual.Parent = eye
+			end
+			visual.Adornee = eye
+			visual.Size = eye.Size
+			visual.CFrame = CFrame.identity
+			visual.Visible = true
+		elseif visual then
+			visual:Destroy()
+		end
+	end
+end
+
 local function applyTitanExpansion(titanModel)
 	if not titanModel:IsA("Model") then
 		return
@@ -817,12 +964,16 @@ local function applyTitanExpansion(titanModel)
 		local existingWeld = part:FindFirstChild("CheddarHitboxWeld")
 		local state = NapeFeature.State[part]
 		local originalSize = NapeFeature.GetOriginalSize(part)
+		NapeFeature.GetOriginalFrame(part, root)
+		local jointFrame = typeof(offset) == "CFrame" and offset or CFrame.new(offset)
 		if state
 			and state.Root == root
 			and state.Size == size
 			and state.Offset == offset
 			and part.Size == size
-			and existingWeld then
+			and part.Massless
+			and existingWeld and existingWeld:IsA("Weld")
+			and existingWeld.C0 == jointFrame then
 			return
 		end
 		for _, obj in ipairs(part:GetChildren()) do
@@ -830,13 +981,23 @@ local function applyTitanExpansion(titanModel)
 				obj:Destroy()
 			end
 		end
+		-- Existing joints may live on the head/root rather than inside the hitbox.
+		-- Remove only joints attached to this DamagePoints part before rewelding it.
+		for _, joint in ipairs(part:GetJoints()) do
+			if joint.Part0 == part or joint.Part1 == part then
+				joint:Destroy()
+			end
+		end
 		part.Size = size
 		part.CanCollide = false
-		part.CFrame = root.CFrame * CFrame.new(offset)
-		local weld = Instance.new("WeldConstraint")
+		part.Massless = true
+		-- Adjust the joint offset instead of moving a welded assembly via CFrame.
+		local weld = Instance.new("Weld")
 		weld.Name = "CheddarHitboxWeld"
 		weld.Part0 = root
 		weld.Part1 = part
+		weld.C0 = jointFrame
+		weld.C1 = CFrame.identity
 		weld.Parent = part
 		NapeFeature.State[part] = {
 			Root = root,
@@ -850,15 +1011,20 @@ local function applyTitanExpansion(titanModel)
 		local nape = NapeFeature.FindNape(titanModel)
 		if nape then
 			local baseSize = NapeFeature.GetOriginalSize(nape)
-			local targetSize = Config.NapeMultiplierEnabled and baseSize * Config.NapeMultiplier or Config.NapeSize
+			local targetSize = Config.NapeMultiplierEnabled and Vector3.new(
+				baseSize.X * Config.NapeAcrossMultiplier,
+				baseSize.Y * Config.NapeDownMultiplier,
+				baseSize.Z * Config.NapeDepthMultiplier
+			) or Config.NapeSize
 			local targetOffset = Config.NapeOffset
 
-			if Config.NapeMultiplierEnabled and Config.NapeNoFrontEnabled then
+			if Config.NapeMultiplierEnabled then
 				local addedSize = targetSize - baseSize
 				-- Roblox's local front is -Z. Moving the center by half of the
 				-- added Y/Z keeps the original top and front faces anchored while
 				-- the hitbox grows downward and backward.
-				targetOffset += Vector3.new(0, -addedSize.Y / 2, addedSize.Z / 2)
+				targetOffset = NapeFeature.GetOriginalFrame(nape, root)
+					* CFrame.new(0, -addedSize.Y / 2, addedSize.Z / 2)
 			end
 
 			configurePart(nape, targetSize, targetOffset)
@@ -868,19 +1034,24 @@ local function applyTitanExpansion(titanModel)
 	NapeFeature.UpdateVisualization(titanModel)
 
 	if Config.EyeEnabled then
-		local eyes = damagePoints:FindFirstChild("Eyes") or damagePoints:FindFirstChild("Eye")
-		if eyes then
-			if eyes:IsA("BasePart") then
-				configurePart(eyes, Config.EyeSize, Config.EyeOffset)
-			else
-				for _, eye in ipairs(eyes:GetDescendants()) do
-					if eye:IsA("BasePart") then
-						configurePart(eye, Config.EyeSize, Config.EyeOffset)
-					end
-				end
+		for _, eye in ipairs(NapeFeature.GetEyes(titanModel)) do
+			local size = Config.EyeSize
+			local offset = Config.EyeOffset
+			if Config.EyeMultiplierEnabled then
+				local original = NapeFeature.GetOriginalSize(eye)
+				-- Grow sideways, downward, and forward; keep the top and back fixed.
+				size = Vector3.new(
+					original.X * Config.EyeAcrossMultiplier,
+					original.Y * Config.EyeDownMultiplier,
+					math.max(original.Z * Config.EyeDepthMultiplier, Config.EyeMinimumDepth)
+				)
+				offset = NapeFeature.GetOriginalFrame(eye, root)
+					* CFrame.new(0, -(size.Y - original.Y) / 2, -(size.Z - original.Z) / 2)
 			end
+			configurePart(eye, size, offset)
 		end
 	end
+	NapeFeature.UpdateEyeVisualization(titanModel)
 end
 
 local World = IS_MAIN_HUB and workspace:WaitForChild("World") or workspace:FindFirstChild("World")
@@ -972,7 +1143,7 @@ if IS_MAIN_HUB then
 		if Config.NapeEnabled or Config.EyeEnabled then
 			applyTitanExpansion(child)
 		end
-		if Config.VisualizeTitanNape then
+		if Config.VisualizeTitanNape or Config.VisualizeTitanEyes then
 			NapeFeature.UpdateVisualization(child)
 		end
 		if Config.NullifyEnabled then
@@ -989,7 +1160,7 @@ if IS_MAIN_HUB then
 			return
 		end
 
-		if not (Config.NapeEnabled or Config.EyeEnabled or Config.VisualizeTitanNape) then
+		if not (Config.NapeEnabled or Config.EyeEnabled or Config.VisualizeTitanNape or Config.VisualizeTitanEyes) then
 			titanFeatureRefreshElapsed = 0
 			return
 		end
@@ -1003,7 +1174,7 @@ if IS_MAIN_HUB then
 		for _, titan in ipairs(TitansFolder:GetChildren()) do
 			if Config.NapeEnabled or Config.EyeEnabled then
 				applyTitanExpansion(titan)
-			elseif Config.VisualizeTitanNape then
+			elseif Config.VisualizeTitanNape or Config.VisualizeTitanEyes then
 				NapeFeature.UpdateVisualization(titan)
 			end
 		end
@@ -3361,7 +3532,7 @@ else
 end
 
 if IS_MAIN_HUB then
-local titanCard = createCard(mainPage, "Titan Hitbox Expander", 358)
+local titanCard = createCard(mainPage, "Titan Hitbox Expander", 370)
 createToggle(titanCard, 50, "Enable Nape Extender", function()
 	return Config.NapeEnabled
 end, function(value)
@@ -3370,7 +3541,7 @@ end, function(value)
 		applyAllTitanExpansion()
 	end
 end)
-createToggle(titanCard, 88, "Use Nape Multiplier", function()
+createToggle(titanCard, 88, "Titan Multiplier No Front", function()
 	return Config.NapeMultiplierEnabled
 end, function(value)
 	Config.NapeMultiplierEnabled = value
@@ -3378,36 +3549,33 @@ end, function(value)
 		applyAllTitanExpansion()
 	end
 end)
-createToggle(titanCard, 126, "Titan Multiplier No Front", function()
-	return Config.NapeNoFrontEnabled
-end, function(value)
-	Config.NapeNoFrontEnabled = value
-	if Config.NapeEnabled and Config.NapeMultiplierEnabled then
-		applyAllTitanExpansion()
-	end
-end)
-createTextBox(titanCard, 164, "Nape Multiplier", "1.25", function(text, box)
-	Config.NapeMultiplier = math.clamp(tonumber(text) or Config.NapeMultiplier, 0.05, 100)
-	box.Text = tostring(Config.NapeMultiplier)
-	if Config.NapeEnabled and Config.NapeMultiplierEnabled then
-		applyAllTitanExpansion()
-	end
-end)
-createTextBox(titanCard, 202, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
+for index, axis in ipairs({"Across", "Depth", "Down"}) do
+	local key = "Nape" .. axis .. "Multiplier"
+	local label = axis == "Depth" and "Back Multiplier (No Front)" or axis .. " Multiplier"
+	createTextBox(titanCard, 126 + (index - 1) * 44, label, Config[key], function(text, box)
+		local value = tonumber(text)
+		if value and value == value then Config[key] = math.clamp(value, 1, 100) end
+		box.Text = tostring(Config[key])
+		if Config.NapeEnabled and Config.NapeMultiplierEnabled then applyAllTitanExpansion() end
+	end)
+end
+createTextBox(titanCard, 258, "Nape Size (X,Y,Z)", "20,20,20", function(text, box)
 	Config.NapeSize = parseVector(text, Config.NapeSize)
 	box.Text = string.format("%s,%s,%s", Config.NapeSize.X, Config.NapeSize.Y, Config.NapeSize.Z)
 	if Config.NapeEnabled and not Config.NapeMultiplierEnabled then
 		applyAllTitanExpansion()
 	end
 end)
-createTextBox(titanCard, 240, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
+createTextBox(titanCard, 302, "Nape Offset (X,Y,Z)", "0,4,5", function(text, box)
 	Config.NapeOffset = parseVector(text, Config.NapeOffset)
 	box.Text = string.format("%s,%s,%s", Config.NapeOffset.X, Config.NapeOffset.Y, Config.NapeOffset.Z)
 	if Config.NapeEnabled then
 		applyAllTitanExpansion()
 	end
 end)
-createToggle(titanCard, 278, "Enable Eye Extender", function()
+do
+local eyeCard = createCard(mainPage, "Titan Eye Expander", 380)
+createToggle(eyeCard, 50, "Enable Eye Extender", function()
 	return Config.EyeEnabled
 end, function(value)
 	Config.EyeEnabled = value
@@ -3415,13 +3583,38 @@ end, function(value)
 		applyAllTitanExpansion()
 	end
 end)
-createTextBox(titanCard, 316, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
+createToggle(eyeCard, 94, "Eye Multiplier No Back", function()
+	return Config.EyeMultiplierEnabled
+end, function(value)
+	Config.EyeMultiplierEnabled = value
+	if Config.EyeEnabled then applyAllTitanExpansion() end
+end)
+for index, axis in ipairs({"Across", "Depth", "Down"}) do
+	local key = "Eye" .. axis .. "Multiplier"
+	local label = axis == "Depth" and "Front Multiplier (No Back)" or axis .. " Multiplier"
+	createTextBox(eyeCard, 138 + (index - 1) * 44, label, Config[key], function(text, box)
+		local value = tonumber(text)
+		if value and value == value then Config[key] = math.clamp(value, 1, 100) end
+		box.Text = tostring(Config[key])
+		if Config.EyeEnabled and Config.EyeMultiplierEnabled then applyAllTitanExpansion() end
+	end)
+end
+createTextBox(eyeCard, 270, "Minimum Depth (Studs)", Config.EyeMinimumDepth, function(text, box)
+	local value = tonumber(text)
+	if value and value == value then
+		Config.EyeMinimumDepth = math.clamp(value, 0.05, 100)
+	end
+	box.Text = tostring(Config.EyeMinimumDepth)
+	if Config.EyeEnabled and Config.EyeMultiplierEnabled then applyAllTitanExpansion() end
+end)
+createTextBox(eyeCard, 314, "Eye Size (X,Y,Z)", "13,13,13", function(text, box)
 	Config.EyeSize = parseVector(text, Config.EyeSize)
 	box.Text = string.format("%s,%s,%s", Config.EyeSize.X, Config.EyeSize.Y, Config.EyeSize.Z)
-	if Config.EyeEnabled then
+	if Config.EyeEnabled and not Config.EyeMultiplierEnabled then
 		applyAllTitanExpansion()
 	end
 end)
+end
 
 local physicsCard = createCard(mainPage, "Nullify", 86)
 createToggle(physicsCard, 48, "Nullify Titan Hitboxes", function()
@@ -3508,6 +3701,12 @@ end, function(value)
 	end
 end)
 end
+
+createToggle(createCard(miscPage, "No Screen Shake", 94), 50, "No Screen Shake", function()
+	return Config.NoScreenShakeEnabled == true
+end, function(value)
+	NapeFeature.SetScreenShake(value)
+end)
 
 local lightingCard = createCard(miscPage, "Lighting", 170)
 createToggle(lightingCard, 50, "NoFog", function()
@@ -3667,6 +3866,12 @@ end, function(value)
 	Config.VisualizeTitanNape = value
 	NapeFeature.ApplyAllVisualizations()
 end)
+createToggle(createCard(visualPage, "Titan Eyes", 94), 50, "Visualize Titan Eyes", function()
+	return Config.VisualizeTitanEyes
+end, function(value)
+	Config.VisualizeTitanEyes = value
+	NapeFeature.ApplyAllVisualizations()
+end)
 end
 
 
@@ -3762,6 +3967,7 @@ end, function(value)
 end)
 
 local function applyConfigEffects()
+	NapeFeature.SetScreenShake(Config.NoScreenShakeEnabled == true)
 	if IS_MAIN_HUB and (Config.NapeEnabled or Config.EyeEnabled) then
 		applyAllTitanExpansion()
 	end
@@ -3884,6 +4090,7 @@ state.SetWindowOpen = function(open)
 end
 
 state.UnloadHub = function()
+	NapeFeature.RestoreScreenShake()
 	_G[RUN_ID_KEY] = (_G[RUN_ID_KEY] or CURRENT_RUN_ID) + 1
 	applyDefaultDisabledConfig()
 	if IS_MAIN_HUB then
