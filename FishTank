@@ -9,12 +9,12 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local SETTINGS = {
-	UiToggleKey = Enum.KeyCode.RightShift,
+	UiToggleKey = Enum.KeyCode.RightAlt,
 
 	NullifierEnabled = false,
 
 	Expander = {
-		Enabled = true,
+		Enabled = false,
 		ShowHighlight = false,
 		Size = Vector3.new(45, 25, 35),
 	},
@@ -49,7 +49,7 @@ local SETTINGS = {
 	Misc = {
 		FovLockEnabled = false,
 		Fov = 70,
-		GearVelocityEnabled = true,
+		GearVelocityEnabled = false,
 	},
 
 	Visuals = {
@@ -1247,6 +1247,7 @@ local pageRefill = createPage("Refill")
 local pageAttributes = createPage("Attributes")
 local pageVisuals = createPage("Visuals")
 local pageMisc = createPage("Misc")
+local pageSettings = createPage("Settings")
 
 createTab(16, "Main", "Main")
 createTab(60, "Gear", "Gear")
@@ -1254,6 +1255,7 @@ createTab(104, "Refill", "Refill")
 createTab(148, "Attributes", "Attributes")
 createTab(192, "Visuals", "Visuals")
 createTab(236, "Misc", "Misc")
+createTab(280, "Settings", "Settings")
 
 local mainCard = createCard(pageMain, 16, 16, 680, 180, "Nullifier")
 createToggle(mainCard, 58, "Titan grab nullifier", function()
@@ -1414,6 +1416,17 @@ createToggle(miscCard, 190, "Show gear velocity", function()
 end, setGearVelocityEnabled)
 pageMisc.CanvasSize = UDim2.new(0, 0, 0, 310)
 
+do
+	local settingsCard = createCard(pageSettings, 16, 16, 680, 155, "Settings")
+	createKeybindRow(settingsCard, 58, "Open / close UI key", function()
+		return SETTINGS.UiToggleKey
+	end, function(key)
+		SETTINGS.UiToggleKey = key
+	end)
+	createLabel(settingsCard, 104, "Click the key button, then press a key. Default: Right Alt.")
+	pageSettings.CanvasSize = UDim2.new(0, 0, 0, 210)
+end
+
 closeBtn.MouseButton1Click:Connect(function()
 	gui.Enabled = false
 end)
@@ -1445,12 +1458,8 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 UserInputService.InputBegan:Connect(function(input, typing)
-	if typing then
-		return
-	end
-
 	if uiState.capturingKeybind then
-		if input.KeyCode ~= Enum.KeyCode.Unknown then
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
 			local button = uiState.capturingKeybind
 			local setter = keybindSetters[button]
 			if setter then
@@ -1460,6 +1469,10 @@ UserInputService.InputBegan:Connect(function(input, typing)
 			button.BackgroundColor3 = COLORS.OFF
 			uiState.capturingKeybind = nil
 		end
+		return
+	end
+
+	if typing then
 		return
 	end
 
