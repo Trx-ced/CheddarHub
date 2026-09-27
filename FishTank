@@ -15,7 +15,8 @@ local SETTINGS = {
 
 	Expander = {
 		Enabled = false,
-		Size = Vector3.new(20, 15, 25),
+		ShowHighlight = false,
+		Size = Vector3.new(45, 25, 35),
 	},
 
 	Gear = {
@@ -342,14 +343,15 @@ local function updateExpanderPart(part)
 	end
 
 	pcall(function()
+		local showHighlight = SETTINGS.Expander.Enabled and SETTINGS.Expander.ShowHighlight
 		part.Size = SETTINGS.Expander.Size
 		part.CanCollide = false
-		part.Transparency = SETTINGS.Expander.Enabled and 0.5 or 1
+		part.Transparency = showHighlight and 0.5 or 1
 		part.Material = Enum.Material.Neon
 		part.BrickColor = BrickColor.new("Bright red")
 
 		local box = part:FindFirstChild("HitboxBox")
-		if not box then
+		if showHighlight and not box then
 			box = Instance.new("SelectionBox")
 			box.Name = "HitboxBox"
 			box.Adornee = part
@@ -358,8 +360,10 @@ local function updateExpanderPart(part)
 			box.Parent = part
 		end
 
-		box.Transparency = SETTINGS.Expander.Enabled and 0.5 or 1
-		box.Visible = SETTINGS.Expander.Enabled
+		if box then
+			box.Transparency = showHighlight and 0.5 or 1
+			box.Visible = showHighlight
+		end
 	end)
 end
 
@@ -1260,17 +1264,25 @@ createButton(mainCard, 130, "REFRESH MARKERS", function()
 	updateNullifier()
 end)
 
-local expanderCard = createCard(pageMain, 16, 220, 680, 190, "Expander")
+local expanderCard = createCard(pageMain, 16, 220, 680, 230, "Expander")
 createToggle(expanderCard, 58, "Nape hitbox expander", function()
 	return SETTINGS.Expander.Enabled
 end, setExpanderEnabled)
-createBox(expanderCard, 104, "Nape hitbox size X,Y,Z", vectorToText(SETTINGS.Expander.Size), function(text)
+createToggle(expanderCard, 102, "Show nape hitbox highlight", function()
+	return SETTINGS.Expander.ShowHighlight
+end, function(state)
+	SETTINGS.Expander.ShowHighlight = state
+	if SETTINGS.Expander.Enabled then
+		scanExpanders()
+	end
+end)
+createBox(expanderCard, 146, "Nape hitbox size X,Y,Z", vectorToText(SETTINGS.Expander.Size), function(text)
 	SETTINGS.Expander.Size = vectorOr(SETTINGS.Expander.Size, text)
 	if SETTINGS.Expander.Enabled then
 		scanExpanders()
 	end
 end)
-pageMain.CanvasSize = UDim2.new(0, 0, 0, 455)
+pageMain.CanvasSize = UDim2.new(0, 0, 0, 495)
 
 local gearCard = createCard(pageGear, 16, 16, 680, 640, "Gear Multipliers")
 createToggle(gearCard, 58, "Enable gear", function()
