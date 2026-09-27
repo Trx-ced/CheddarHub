@@ -14,7 +14,7 @@ local SETTINGS = {
 	NullifierEnabled = false,
 
 	Expander = {
-		Enabled = false,
+		Enabled = true,
 		ShowHighlight = false,
 		Size = Vector3.new(45, 25, 35),
 	},
@@ -49,7 +49,7 @@ local SETTINGS = {
 	Misc = {
 		FovLockEnabled = false,
 		Fov = 70,
-		GearVelocityEnabled = false,
+		GearVelocityEnabled = true,
 	},
 
 	Visuals = {
