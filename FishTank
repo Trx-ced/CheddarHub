@@ -16,7 +16,7 @@ local SETTINGS = {
 	Expander = {
 		Enabled = false,
 		ShowHighlight = false,
-		Size = Vector3.new(45, 25, 35),
+		Size = Vector3.new(65, 35, 35),
 	},
 
 	Gear = {
