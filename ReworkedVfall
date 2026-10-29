@@ -544,7 +544,11 @@ local function restoreOdmClassMods()
 	for instance, originalStats in pairs(instanceOriginals or {}) do
 		if type(instance) == "table" then
 			for statName, originalValue in pairs(originalStats) do
-				rawset(instance, statName, originalValue == nilSentinel and nil or originalValue)
+				if originalValue == nilSentinel then
+					rawset(instance, statName, nil)
+				else
+					rawset(instance, statName, originalValue)
+				end
 			end
 		end
 	end
@@ -598,7 +602,11 @@ local function applyOdmStatsToInstance(self)
 			rawset(self, statName, overrideValue)
 		elseif originalStats[statName] ~= nil then
 			local originalValue = originalStats[statName]
-			rawset(self, statName, originalValue == ODM_NIL_SENTINEL and nil or originalValue)
+			if originalValue == ODM_NIL_SENTINEL then
+				rawset(self, statName, nil)
+			else
+				rawset(self, statName, originalValue)
+			end
 			originalStats[statName] = nil
 		end
 	end
@@ -757,6 +765,20 @@ if typeof(attributeOriginalState) ~= "table" then
 end
 local originalCustomAttributes = attributeOriginalState.Values
 local ATTRIBUTE_NIL_SENTINEL = attributeOriginalState.NilSentinel
+-- Read the real attribute, bypassing this hub's GetAttribute override.
+-- Keep this synchronous so the feature flag is restored before other work runs.
+local function readActualCustomAttribute(statName)
+	local wasEnabled = Config.AttributesEnabled
+	Config.AttributesEnabled = false
+	local ok, value = pcall(function()
+		return clientInfo:GetAttribute(statName)
+	end)
+	Config.AttributesEnabled = wasEnabled
+	if not ok then
+		error(value, 0)
+	end
+	return value
+end
 
 local function restoreCustomStat(statName)
 	if not clientInfo or not clientInfo.Parent then
@@ -769,7 +791,11 @@ local function restoreCustomStat(statName)
 	end
 
 	customStatWriteLocks[statName] = true
-	clientInfo:SetAttribute(statName, originalValue == ATTRIBUTE_NIL_SENTINEL and nil or originalValue)
+	if originalValue == ATTRIBUTE_NIL_SENTINEL then
+		clientInfo:SetAttribute(statName, nil)
+	else
+		clientInfo:SetAttribute(statName, originalValue)
+	end
 	customStatWriteLocks[statName] = nil
 	originalCustomAttributes[statName] = nil
 end
@@ -798,11 +824,11 @@ local function enforceCustomStat(statName)
 		return
 	end
 	if originalCustomAttributes[statName] == nil then
-		local currentValue = clientInfo:GetAttribute(statName)
+		local currentValue = readActualCustomAttribute(statName)
 		originalCustomAttributes[statName] = currentValue == nil and ATTRIBUTE_NIL_SENTINEL or currentValue
 	end
 
-	if clientInfo:GetAttribute(statName) ~= statValue then
+	if readActualCustomAttribute(statName) ~= statValue then
 		customStatWriteLocks[statName] = true
 		clientInfo:SetAttribute(statName, statValue)
 		customStatWriteLocks[statName] = nil
