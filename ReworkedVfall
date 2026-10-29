@@ -69,8 +69,6 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 		FirearmRange = 500,
 		GasConservation = 0.5,
 		MeleeDamage = 5000,
-		OdmHookVeloGain = 2,
-		OdmPassiveVeloGain = 2,
 		OdmVeloCap = 300,
 		PlayerCritChance = 1000,
 		ReloadSpeed = 1.5,
@@ -84,8 +82,6 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 	CustomStatsEnabled = {
 		FirearmRange = false,
 		GasConservation = false,
-		OdmHookVeloGain = false,
-		OdmPassiveVeloGain = false,
 		OdmVeloCap = false,
 		ReloadSpeed = false,
 		RunSpeed = false,
@@ -135,6 +131,26 @@ _G[CONFIG_GLOBAL_KEY] = _G[CONFIG_GLOBAL_KEY] or {
 
 local Config = _G[CONFIG_GLOBAL_KEY]
 local syncConfigInputs = function() end
+
+local REMOVED_ATTRIBUTE_STATS = {
+	OdmHookVeloGain = true,
+	OdmPassiveVeloGain = true,
+}
+
+local function sanitizeRemovedAttributeStats(config)
+	if typeof(config.CustomStats) == "table" then
+		for statName in pairs(REMOVED_ATTRIBUTE_STATS) do
+			config.CustomStats[statName] = nil
+		end
+	end
+	if typeof(config.CustomStatsEnabled) == "table" then
+		for statName in pairs(REMOVED_ATTRIBUTE_STATS) do
+			config.CustomStatsEnabled[statName] = nil
+		end
+	end
+end
+
+sanitizeRemovedAttributeStats(Config)
 
 local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"NapeEnabled",
@@ -413,6 +429,7 @@ local function LoadConfig(configFile)
 
 	if success and typeof(saved) == "table" then
 		mergeConfig(Config, saved)
+		sanitizeRemovedAttributeStats(Config)
 		return true
 	end
 
@@ -458,8 +475,6 @@ Config.FOVLockValue = math.clamp(tonumber(Config.FOVLockValue) or 70, 1, 120)
 local DEFAULT_CUSTOM_STATS = {
 	FirearmRange = 500,
 	GasConservation = 0.5,
-	OdmHookVeloGain = 2,
-	OdmPassiveVeloGain = 2,
 	OdmVeloCap = 300,
 	ReloadSpeed = 1.5,
 	RunSpeed = 1,
@@ -524,6 +539,15 @@ end
 
 local function restoreOdmClassMods()
 	local patchState = _G[ODM_CLASS_PATCH_KEY]
+	local instanceOriginals = patchState and patchState.InstanceOriginals or odmClassInstanceOriginals
+	local nilSentinel = patchState and patchState.NilSentinel or ODM_NIL_SENTINEL
+	for instance, originalStats in pairs(instanceOriginals or {}) do
+		if type(instance) == "table" then
+			for statName, originalValue in pairs(originalStats) do
+				rawset(instance, statName, originalValue == nilSentinel and nil or originalValue)
+			end
+		end
+	end
 	if patchState and patchState.Class then
 		patchState.Class.__index = patchState.OriginalIndex
 		for methodName, originalFunc in pairs(patchState.OriginalMethods or {}) do
@@ -575,6 +599,7 @@ local function applyOdmStatsToInstance(self)
 		elseif originalStats[statName] ~= nil then
 			local originalValue = originalStats[statName]
 			rawset(self, statName, originalValue == ODM_NIL_SENTINEL and nil or originalValue)
+			originalStats[statName] = nil
 		end
 	end
 end
@@ -597,6 +622,8 @@ local function installOdmClassMods()
 		OriginalIndex = originalIndex,
 		OriginalMethods = {},
 		WrappedMethods = {},
+		InstanceOriginals = odmClassInstanceOriginals,
+		NilSentinel = ODM_NIL_SENTINEL,
 	}
 
 	OdmClass.__index = function(self, key)
@@ -641,8 +668,6 @@ end
 local VISIBLE_ATTRIBUTE_STATS = {
 	"FirearmRange",
 	"GasConservation",
-	"OdmHookVeloGain",
-	"OdmPassiveVeloGain",
 	"OdmVeloCap",
 	"ReloadSpeed",
 	"RunSpeed",
@@ -691,8 +716,6 @@ Config.SelectedConfigName = sanitizeConfigName(Config.SelectedConfigName)
 Config.AutoLoadConfig = Config.AutoLoadConfig == true
 
 local movementAttributes = {
-	OdmHookVeloGain = true,
-	OdmPassiveVeloGain = true,
 	OdmVeloCap = true,
 	RunSpeed = true,
 	VelocityScaling = true,
@@ -723,15 +746,60 @@ normalizeVisibleCustomStatToggles()
 
 local clientInfo = localPlayer:WaitForChild("ClientInformation", 5)
 local customStatWriteLocks = {}
+local ATTRIBUTE_ORIGINALS_KEY = "CheddarHubAttributeOriginals_" .. HUB_PROFILE
+local attributeOriginalState = _G[ATTRIBUTE_ORIGINALS_KEY]
+if typeof(attributeOriginalState) ~= "table" then
+	attributeOriginalState = {
+		Values = {},
+		NilSentinel = {},
+	}
+	_G[ATTRIBUTE_ORIGINALS_KEY] = attributeOriginalState
+end
+local originalCustomAttributes = attributeOriginalState.Values
+local ATTRIBUTE_NIL_SENTINEL = attributeOriginalState.NilSentinel
+
+local function restoreCustomStat(statName)
+	if not clientInfo or not clientInfo.Parent then
+		return
+	end
+
+	local originalValue = originalCustomAttributes[statName]
+	if originalValue == nil then
+		return
+	end
+
+	customStatWriteLocks[statName] = true
+	clientInfo:SetAttribute(statName, originalValue == ATTRIBUTE_NIL_SENTINEL and nil or originalValue)
+	customStatWriteLocks[statName] = nil
+	originalCustomAttributes[statName] = nil
+end
+
+local function restoreAllCustomStats()
+	local pending = {}
+	for statName in pairs(originalCustomAttributes) do
+		pending[#pending + 1] = statName
+	end
+	for _, statName in ipairs(pending) do
+		restoreCustomStat(statName)
+	end
+end
 
 local function enforceCustomStat(statName)
-	if customStatWriteLocks[statName] or not Config.AttributesEnabled or not clientInfo or not clientInfo.Parent then
+	if customStatWriteLocks[statName] or not clientInfo or not clientInfo.Parent then
+		return
+	end
+	if not Config.AttributesEnabled or not shouldApplyCustomStat(statName) then
+		restoreCustomStat(statName)
 		return
 	end
 
 	local statValue = Config.CustomStats[statName]
-	if statValue == nil or not shouldApplyCustomStat(statName) then
+	if statValue == nil then
 		return
+	end
+	if originalCustomAttributes[statName] == nil then
+		local currentValue = clientInfo:GetAttribute(statName)
+		originalCustomAttributes[statName] = currentValue == nil and ATTRIBUTE_NIL_SENTINEL or currentValue
 	end
 
 	if clientInfo:GetAttribute(statName) ~= statValue then
@@ -742,7 +810,7 @@ local function enforceCustomStat(statName)
 end
 
 local function applyCustomStats()
-	if not Config.AttributesEnabled or not clientInfo or not clientInfo.Parent then
+	if not clientInfo or not clientInfo.Parent then
 		return
 	end
 
@@ -750,6 +818,10 @@ local function applyCustomStats()
 		enforceCustomStat(statName)
 	end
 end
+
+-- Clean up overrides left by an earlier execution of this fixed script before
+-- applying settings for the current run.
+restoreAllCustomStats()
 
 
 local NapeFeature = {}
@@ -3644,8 +3716,8 @@ end, function(value)
 	if value then
 		enableVisibleCustomStats()
 		refreshConfigControls()
-		applyCustomStats()
 	end
+	applyCustomStats()
 end)
 
 local odmgAttrCard = createCard(attrPage, "ODMG Movement Attributes", 94)
@@ -3653,9 +3725,7 @@ createToggle(odmgAttrCard, 50, "Enable ODMG Movement Stats", function()
 	return Config.ODMGAttributesEnabled
 end, function(value)
 	Config.ODMGAttributesEnabled = value
-	if Config.AttributesEnabled then
-		applyCustomStats()
-	end
+	applyCustomStats()
 end)
 
 local anyCustomStatEnabled = false
@@ -4102,6 +4172,9 @@ state.UnloadHub = function()
 	Config.PlayerESPEnabled = false
 	Config.FOVEnabled = false
 	Config.HideFOV = true
+	Config.AttributesEnabled = false
+	Config.ODMGAttributesEnabled = false
+	restoreAllCustomStats()
 	Config.GearStatsEnabled = {}
 	for statName in pairs(GEAR_STAT_VALUES) do
 		Config.GearStatsEnabled[statName] = false
