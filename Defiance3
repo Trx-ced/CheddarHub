@@ -50,7 +50,8 @@ local State = {
 
 	HookRangeExtenderEnabled = true,
 	HookRangeValue = 800,
-	TitanNullifierEnabled = true,
+	TitanNullifierEnabled = false,
+	TitanNullifierV2Enabled = true,
 	AntiGrabV3Enabled = false,
 	HorseStaminaEnabled = false,
 	NoFogEnabled = false,
@@ -1567,6 +1568,134 @@ do
 	end
 end
 
+local TitanNullifierV2Runtime = {}
+do
+	local TitanStateEvaluator
+	local realOriginalBestAction
+	local callableOriginalBestAction
+	local modifiedBestActionForTime
+	local patchLoopRunning = false
+	local hookInstalled = false
+	local inCustomBestAction = false
+
+	local blockedActions = {
+		Bite = true,
+		Stomp = true,
+		SwipeL = true,
+		SwipeR = true,
+		GroundSwipeL = true,
+		GroundSwipeR = true,
+		NapeGrab = true,
+		NormalDehook = true,
+		EggheadLeap = true,
+		CrawlerLeap = true,
+		CrawlerBite = true,
+		BurrowSurprise = true,
+		Dehook = true,
+		Flop = true,
+		Kick = true,
+		AbnormalStomp = true,
+	}
+
+	local function loadEvaluator()
+		if TitanStateEvaluator then
+			return true
+		end
+
+		local clientModules = ReplicatedStorage:FindFirstChild("Client_Modules") or ReplicatedStorage:FindFirstChild("ClientModules")
+		if not clientModules then return false end
+
+		local evaluatorModule = clientModules:FindFirstChild("TitanStateEvaluator")
+		if not evaluatorModule then return false end
+
+		local success, evaluator = pcall(require, evaluatorModule)
+		if not success or type(evaluator) ~= "table" then
+			return false
+		end
+
+		TitanStateEvaluator = evaluator
+		realOriginalBestAction = evaluator.BestActionForTime
+		callableOriginalBestAction = realOriginalBestAction
+		return type(realOriginalBestAction) == "function"
+	end
+
+	modifiedBestActionForTime = function(a1)
+		local original = callableOriginalBestAction or realOriginalBestAction
+
+		if not State.TitanNullifierV2Enabled then
+			return original and original(a1)
+		end
+
+		if inCustomBestAction then
+			return nil
+		end
+
+		inCustomBestAction = true
+		local success, result = pcall(function()
+			return original and original(a1)
+		end)
+		inCustomBestAction = false
+
+		if not success then
+			return nil
+		end
+
+		if result and result.Action and blockedActions[result.Action] then
+			result.Action = "None"
+			result.Priority = -math.huge
+		end
+
+		return result
+	end
+
+	local function installOverride()
+		if not loadEvaluator() then return false end
+
+		if not hookInstalled and hookfunction and realOriginalBestAction then
+			local success, original = pcall(function()
+				return hookfunction(realOriginalBestAction, modifiedBestActionForTime)
+			end)
+			if success and type(original) == "function" then
+				callableOriginalBestAction = original
+				hookInstalled = true
+			end
+		end
+
+		TitanStateEvaluator.BestActionForTime = modifiedBestActionForTime
+		return true
+	end
+
+	local function startPatchLoop()
+		if patchLoopRunning then return end
+		patchLoopRunning = true
+		task.spawn(function()
+			while patchLoopRunning and not unloaded do
+				if State.TitanNullifierV2Enabled then
+					installOverride()
+				end
+				task.wait(1)
+			end
+		end)
+	end
+
+	function TitanNullifierV2Runtime.Refresh()
+		if State.TitanNullifierV2Enabled then
+			installOverride()
+			startPatchLoop()
+		else
+			patchLoopRunning = false
+		end
+	end
+
+	function TitanNullifierV2Runtime.Stop()
+		patchLoopRunning = false
+		State.TitanNullifierV2Enabled = false
+		if TitanStateEvaluator and not hookInstalled and realOriginalBestAction then
+			TitanStateEvaluator.BestActionForTime = realOriginalBestAction
+		end
+	end
+end
+
 local AntiGrabRuntime = {}
 do
 	local GrabModule = require(ReplicatedStorage:WaitForChild("Client_Modules"):WaitForChild("GrabModuleClient"))
@@ -2091,6 +2220,7 @@ local pagePlayers = newPage("Players")
 local pageMisc = newPage("Misc")
 local pageUI = newPage("UI Settings")
 local pageGcool = newPage("Gcool Special")
+local pageRework2 = newPage("Rework2")
 local pageGear = newPage("Gear")
 
 local function sectionBox(parent, x, y, w, h, headerText)
@@ -2816,6 +2946,23 @@ mk("TextLabel", {
 	Text = "ONLY USE WHEN HORSE IS SPAWNED",
 })
 
+local boxRework2 = sectionBox(pageRework2, 16, 16, 460, 150, "Rework2")
+local titanNullifierV2Toggle = toggleRow(boxRework2, 44, "Titan Nullifier v2")
+
+mk("TextLabel", {
+	Parent = boxRework2,
+	Position = UDim2.new(0, 18, 0, 82),
+	Size = UDim2.new(1, -36, 0, 46),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = COL_SUB,
+	Text = "Filters titan evaluator actions while preserving the original evaluator for unblocked results.",
+})
+
 do
 	local gearScroll = mk("ScrollingFrame", {
 	Parent = pageGear,
@@ -2973,7 +3120,8 @@ makeSideTab(238, "Players", "Players")
 makeSideTab(284, "Misc", "Misc")
 makeSideTab(330, "UI Settings", "UI Settings")
 makeSideTab(376, "Gcool Special", "Gcool Special")
-makeSideTab(422, "Gear", "Gear")
+makeSideTab(422, "Rework2", "Rework2")
+makeSideTab(468, "Gear", "Gear")
 
 local function refreshBindText()
 	local name = keyName(State.ToggleKeybind)
@@ -3162,6 +3310,7 @@ local function refresh()
 
 	setToggle(hookRangeToggle, State.HookRangeExtenderEnabled)
 	setToggle(titanNullifierToggle, State.TitanNullifierEnabled)
+	setToggle(titanNullifierV2Toggle, State.TitanNullifierV2Enabled)
 	setToggle(antiGrabV3Toggle, State.AntiGrabV3Enabled)
 	setToggle(horseStaminaToggle, State.HorseStaminaEnabled)
 	setToggle(gearUi.Toggle, State.GearConfigEnabled)
@@ -3199,6 +3348,10 @@ local function refresh()
 	end)
 
 	pcall(function()
+		TitanNullifierV2Runtime.Refresh()
+	end)
+
+	pcall(function()
 		AntiGrabRuntime.Refresh()
 	end)
 
@@ -3212,6 +3365,10 @@ local function refresh()
 
 	pcall(function()
 		NoFogRuntime.Refresh()
+	end)
+
+	pcall(function()
+		applyGearConfig()
 	end)
 end
 
@@ -3237,6 +3394,7 @@ local function unload()
 	State.GiveHandcutEnabled = false
 	State.HookRangeExtenderEnabled = false
 	State.TitanNullifierEnabled = false
+	State.TitanNullifierV2Enabled = false
 	State.AntiGrabV3Enabled = false
 	State.HorseStaminaEnabled = false
 	State.GearConfigEnabled = false
@@ -3244,6 +3402,7 @@ local function unload()
 	pcall(function() BlatantRuntime.Stop() end)
 	pcall(function() HookRangeRuntime.Stop() end)
 	pcall(function() TitanNullifierRuntime.Stop() end)
+	pcall(function() TitanNullifierV2Runtime.Stop() end)
 	pcall(function() AntiGrabRuntime.Stop() end)
 	pcall(function() HorseStaminaRuntime.Stop() end)
 	pcall(function() NoFogRuntime.Stop() end)
@@ -3527,6 +3686,18 @@ end))
 track(titanNullifierToggle.MouseButton1Click:Connect(function()
 	if unloaded then return end
 	State.TitanNullifierEnabled = not State.TitanNullifierEnabled
+	if State.TitanNullifierEnabled then
+		State.TitanNullifierV2Enabled = false
+	end
+	refresh()
+end))
+
+track(titanNullifierV2Toggle.MouseButton1Click:Connect(function()
+	if unloaded then return end
+	State.TitanNullifierV2Enabled = not State.TitanNullifierV2Enabled
+	if State.TitanNullifierV2Enabled then
+		State.TitanNullifierEnabled = false
+	end
 	refresh()
 end))
 
