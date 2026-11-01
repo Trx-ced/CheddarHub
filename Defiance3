@@ -121,7 +121,7 @@ local function storeBasePartState(part)
 		part:SetAttribute("HB_OrigMeshX", mesh.Scale.X)
 		part:SetAttribute("HB_OrigMeshY", mesh.Scale.Y)
 		part:SetAttribute("HB_OrigMeshZ", mesh.Scale.Z)
-
+	else
 		part:SetAttribute("HB_HasMesh", 0)
 	end
 end
