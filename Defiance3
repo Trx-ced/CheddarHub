@@ -121,7 +121,7 @@ local function storeBasePartState(part)
 		part:SetAttribute("HB_OrigMeshX", mesh.Scale.X)
 		part:SetAttribute("HB_OrigMeshY", mesh.Scale.Y)
 		part:SetAttribute("HB_OrigMeshZ", mesh.Scale.Z)
-	else
+
 		part:SetAttribute("HB_HasMesh", 0)
 	end
 end
@@ -1865,7 +1865,7 @@ do
 		RangeScaling = 100,
 		BaseVelocityGainMultiplierBoosting = 1.7,
 		GearName = "3DMG",
-		VeloCap = 400,
+		VeloCap = 350,
 		BaseVelocityGainGrounded = 5,
 		GasIntakeBase = 0.35,
 		BaseVelocityGain = 6,
