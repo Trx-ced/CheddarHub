@@ -186,6 +186,7 @@ local DEFAULT_DISABLED_CONFIG_KEYS = {
 	"TitanDummyShowEnabled",
 	"NoTalentCooldownEnabled",
 	"BladeModsEnabled",
+	"GearBladeDamageEnabled",
 	"BladeTitanMultiplierEnabled",
 	"BladeHumanMultiplierEnabled",
 }
@@ -334,7 +335,7 @@ local autosaveQueued = false
 
 local function writeConfigFile(configFile)
 	if not writefile or not makefolder then
-		warn("[CheddarHub Config] Your executor does not support file saving.")
+		warn("[Cheddar Cheese Hub Config] Your executor does not support file saving.")
 		return false
 	end
 
@@ -352,7 +353,7 @@ local function writeConfigFile(configFile)
 	end)
 
 	if not success then
-		warn("[CheddarHub Config] Save failed:", err)
+		warn("[Cheddar Cheese Hub Config] Save failed:", err)
 	end
 
 	return success
@@ -376,6 +377,22 @@ local function SaveConfig(configFile)
 	return true
 end
 
+local Theme = {
+	defaults = { Accent = "FFC04D", Background = "211910" },
+	colors = {},
+	bindings = {},
+	gradients = {},
+}
+
+function Theme.hex(value)
+	if type(value) ~= "string" then return nil end
+	local hex = value:match("^%s*#?(%x%x%x%x%x%x)%s*$")
+	return hex and hex:upper()
+end
+
+Theme.accent = Theme.defaults.Accent
+Theme.background = Theme.defaults.Background
+
 local function SaveConfigSettings()
 	if not writefile or not makefolder then
 		return false
@@ -392,6 +409,8 @@ local function SaveConfigSettings()
 		writefile(CONFIG_SETTINGS_FILE, HttpService:JSONEncode({
 			SelectedConfigName = sanitizeConfigName(Config.SelectedConfigName),
 			AutoLoadConfig = Config.AutoLoadConfig == true,
+			ThemeAccent = Theme.accent,
+			ThemeBackground = Theme.background,
 		}))
 	end)
 
@@ -410,6 +429,8 @@ local function LoadConfigSettings()
 	if success and typeof(settings) == "table" then
 		Config.SelectedConfigName = sanitizeConfigName(settings.SelectedConfigName)
 		Config.AutoLoadConfig = settings.AutoLoadConfig == true
+		Theme.accent = Theme.hex(settings.ThemeAccent) or Theme.defaults.Accent
+		Theme.background = Theme.hex(settings.ThemeBackground) or Theme.defaults.Background
 		return true
 	end
 
@@ -429,11 +450,13 @@ local function LoadConfig(configFile)
 
 	if success and typeof(saved) == "table" then
 		mergeConfig(Config, saved)
+		Config.GearBladeDamageEnabled = saved.GearBladeDamageEnabled == true
+		Config.GearBladeDamageMultiplier = tonumber(saved.GearBladeDamageMultiplier) or 2
 		sanitizeRemovedAttributeStats(Config)
 		return true
 	end
 
-	warn("[CheddarHub Config] Load failed:", saved)
+	warn("[Cheddar Cheese Hub Config] Load failed:", saved)
 	return false
 end
 
@@ -500,22 +523,30 @@ local GEAR_STAT_VALUES = {
 	BoostVeloGainMulti = 1,
 }
 
-local GEAR_STAT_ORDER = {
-	"BoostVelocity",
-	"HookSpeed",
-	"CapVelocity",
-	"BoostGasMultiplier",
-	"HardVelocityCap",
-	"HookRange",
-	"GasDrain",
-	"CapGainMultiplier",
-	"VeloGain",
-	"BaseVelocity",
-	"ReelSpeed",
-	"Durability",
-	"SoftVelocityCap",
-	"HookVeloGain",
-	"BoostVeloGainMulti",
+local GEAR_SECTIONS = {
+	{ title = "Hooks & reeling", rows = {
+		{"HookRange", "Hook reach", "Raise this to hook targets farther away."},
+		{"HookSpeed", "Hook travel speed", "Raise this to make the fired hook reach its target sooner."},
+		{"HookVeloGain", "Speed on attachment", "Raise this for a bigger burst of speed when a hook connects."},
+		{"ReelSpeed", "Reel-in speed", "Raise this to pull yourself in faster while reeling."},
+	}},
+	{ title = "Movement & boosting", rows = {
+		{"BaseVelocity", "Starting speed", "Sets the speed you start at and slow back down to while hooked."},
+		{"VeloGain", "Acceleration", "Raise this to build speed faster while moving on a hook."},
+		{"BoostVelocity", "Extra boost speed", "Raise this for more top speed while boosting."},
+		{"BoostVeloGainMulti", "Boost acceleration", "1 = normal acceleration while boosting. 2 = double."},
+	}},
+	{ title = "Speed limits", rows = {
+		{"CapVelocity", "Base speed limit", "Raise this to increase your potential top speed."},
+		{"CapGainMultiplier", "Speed limit from stats", "Raise this so the player’s ODM speed cap adds more top speed."},
+		{"SoftVelocityCap", "Where speed gains slow", "Raise this so you get full speed-limit gains for longer."},
+		{"HardVelocityCap", "Normal top speed", "Caps normal speed. Boosting and reeling can take you past it."},
+	}},
+	{ title = "Gas & blades", rows = {
+		{"GasDrain", "Gas use", "Lower this to make your gas last longer."},
+		{"BoostGasMultiplier", "Gas use while boosting", "1 = normal gas use. 2 = double. Lower uses less."},
+		{"Durability", "Blade durability left", "Raise this for more remaining durability on gear with blades."},
+	}},
 }
 
 Config.GearStatsEnabled = typeof(Config.GearStatsEnabled) == "table" and Config.GearStatsEnabled or {}
@@ -1518,6 +1549,139 @@ end
 
 
 
+local bladeBoost = { key = "CheddarGearBladeDamage_" .. HUB_PROFILE }
+
+function bladeBoost.multiplier(value)
+	local n = tonumber(value)
+	return n and n >= 1 and n < math.huge and n or nil
+end
+
+function bladeBoost.stop()
+	local state = _G[bladeBoost.key]
+	if not state then return end
+	_G[bladeBoost.key] = nil
+	if state.spawn then state.spawn:Disconnect() end
+	if state.moduleWatch then state.moduleWatch:Disconnect() end
+	if state.class and state.class.New == state.wrapper then
+		pcall(function() state.class.New = state.originalNew end)
+	end
+	for blade, record in pairs(state.blades) do
+		if rawget(blade, "Damage") == record.applied then pcall(rawset, blade, "Damage", record.base) end
+	end
+	for char, record in pairs(state.characters) do
+		pcall(function()
+			if char:GetAttribute("BladeDamage") == record.applied then
+				char:SetAttribute("BladeDamage", record.base)
+			end
+		end)
+	end
+end
+
+function bladeBoost.applyBlade(state, blade)
+	if type(blade) ~= "table" then return end
+	local current = rawget(blade, "Damage")
+	if type(current) ~= "number" then return end
+	local record = state.blades[blade]
+	local base = record and record.base or current
+	local damage = base * state.factor
+	if damage < math.huge and pcall(rawset, blade, "Damage", damage) then
+		state.blades[blade] = { base = base, applied = damage }
+	end
+end
+
+function bladeBoost.applyCharacter(state, char)
+	if not char then return end
+	local current = char:GetAttribute("BladeDamage")
+	if current ~= nil and type(current) ~= "number" then return end
+	local record = state.characters[char]
+	local base = current
+	if record and current == record.applied then base = record.base end
+	local damage = (base or 100) * state.factor
+	if damage >= math.huge then return end
+	state.characters[char] = { base = base, applied = damage }
+	char:SetAttribute("BladeDamage", damage)
+end
+
+function bladeBoost.hookConstructor(state)
+	local module = ReplicatedStorage
+	for _, name in ipairs({"ClientFramework", "Classes", "OdmClass", "SubClasses", "BladeClass"}) do
+		module = module and module:FindFirstChild(name)
+	end
+	if not module then
+		if not state.moduleWatch then
+			state.moduleWatch = ReplicatedStorage.DescendantAdded:Connect(function(child)
+				if child.Name == "BladeClass" and _G[bladeBoost.key] == state then
+					bladeBoost.hookConstructor(state)
+				end
+			end)
+		end
+	else
+		if state.moduleWatch then state.moduleWatch:Disconnect() state.moduleWatch = nil end
+		local ok, class = pcall(require, module)
+		if _G[bladeBoost.key] ~= state then return end
+		if ok and type(class) == "table" and type(class.New) == "function" then
+			local original = class.New
+			local function wrapped(...)
+				local results = table.pack(original(...))
+				if _G[bladeBoost.key] == state then bladeBoost.applyBlade(state, results[1]) end
+				return table.unpack(results, 1, results.n)
+			end
+			if pcall(function() class.New = wrapped end) then
+				state.class, state.originalNew, state.wrapper = class, original, wrapped
+			end
+		end
+	end
+end
+
+function bladeBoost.attach(state)
+	if _G[bladeBoost.key] ~= state then return end
+	bladeBoost.hookConstructor(state)
+	if _G[bladeBoost.key] ~= state then return end
+	if type(getgc) == "function" then
+		local ok, objects = pcall(getgc, true)
+		if _G[bladeBoost.key] ~= state then return end
+		if ok and type(objects) == "table" then
+			for _, obj in pairs(objects) do
+				if type(obj) == "table" and rawget(obj, "CurrentSwingName") ~= nil then
+					bladeBoost.applyBlade(state, obj)
+				end
+			end
+		end
+	end
+end
+
+function bladeBoost.sync()
+	Config.GearBladeDamageMultiplier = bladeBoost.multiplier(Config.GearBladeDamageMultiplier) or 2
+	if not Config.GearBladeDamageEnabled then bladeBoost.stop() return end
+	local state = _G[bladeBoost.key]
+	if state then
+		state.factor = Config.GearBladeDamageMultiplier
+		for blade in pairs(state.blades) do bladeBoost.applyBlade(state, blade) end
+		bladeBoost.applyCharacter(state, localPlayer.Character)
+		return
+	end
+	state = {
+		factor = Config.GearBladeDamageMultiplier,
+		blades = setmetatable({}, {__mode = "k"}),
+		characters = setmetatable({}, {__mode = "k"}),
+	}
+	_G[bladeBoost.key] = state
+	state.spawn = localPlayer.CharacterAdded:Connect(function(char)
+		if _G[bladeBoost.key] == state then bladeBoost.applyCharacter(state, char) end
+	end)
+	bladeBoost.applyCharacter(state, localPlayer.Character)
+	task.spawn(bladeBoost.attach, state)
+end
+
+function bladeBoost.record(blade)
+	local state = _G[bladeBoost.key]
+	return state and state.blades[blade]
+end
+
+-- Restore owned overrides if this copy replaces an active run.
+bladeBoost.stop()
+Config.GearBladeDamageMultiplier = bladeBoost.multiplier(Config.GearBladeDamageMultiplier) or 2
+
 local bladeMods = {
 	Patched = false,
 	Target = nil,
@@ -1565,17 +1729,18 @@ local function installBladeMods()
 			bladeMods.Target = obj
 			bladeMods.OriginalOnHit = obj.__CheddarOriginalOnHit
 
-			if obj.OnHit ~= obj.__CheddarWrappedOnHit or obj.__CheddarWrappedOnHitVersion ~= 3 then
+			if obj.OnHit ~= obj.__CheddarWrappedOnHit or obj.__CheddarWrappedOnHitVersion ~= 4 then
 				obj.__CheddarWrappedOnHit = function(self, target, hitPart, enemyType, ...)
 					if not Config.BladeModsEnabled then
 						return obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
 					end
 
+					local boost = bladeBoost.record(self)
 					if self.UnmodifiedBaseDamage == nil then
-						self.UnmodifiedBaseDamage = self.Damage
+						self.UnmodifiedBaseDamage = boost and boost.base or self.Damage
 					end
 
-					local trueBase = self.UnmodifiedBaseDamage
+					local trueBase = boost and boost.applied or self.UnmodifiedBaseDamage
 					if type(trueBase) == "number" then
 						if (enemyType == "Titan" or enemyType == "TitanDummy") and Config.BladeTitanMultiplierEnabled then
 							self.Damage = trueBase * math.max(tonumber(Config.BladeTitanMultiplier) or 1, 1)
@@ -1587,10 +1752,11 @@ local function installBladeMods()
 					end
 
 					local result = obj.__CheddarOriginalOnHit(self, target, hitPart, enemyType, ...)
-					self.Damage = trueBase
+					boost = bladeBoost.record(self)
+					self.Damage = boost and boost.applied or self.UnmodifiedBaseDamage
 					return result
 				end
-				obj.__CheddarWrappedOnHitVersion = 3
+				obj.__CheddarWrappedOnHitVersion = 4
 				obj.OnHit = obj.__CheddarWrappedOnHit
 			end
 
@@ -2898,29 +3064,58 @@ if IS_MAIN_HUB and Config.AimAssistHookVersion ~= 2 then
 	end
 end
 
-local COLORS = {
-	BG = Color3.fromRGB(8, 8, 10),
-	TOP = Color3.fromRGB(12, 12, 15),
-	SIDE = Color3.fromRGB(14, 14, 17),
-	PANEL = Color3.fromRGB(14, 14, 16),
-	PANEL2 = Color3.fromRGB(20, 20, 24),
-	INPUT = Color3.fromRGB(25, 25, 29),
-	STROKE = Color3.fromRGB(115, 77, 255),
-	STROKE_SOFT = Color3.fromRGB(47, 47, 56),
-	TEXT = Color3.fromRGB(245, 245, 250),
-	SUB = Color3.fromRGB(160, 160, 170),
-	ON = Color3.fromRGB(132, 84, 255),
-	OFF = Color3.fromRGB(34, 34, 39),
-	ACCENT = Color3.fromRGB(132, 84, 255),
-	TAB = Color3.fromRGB(16, 16, 19),
-	TAB_ACTIVE = Color3.fromRGB(31, 26, 47),
-	DIVIDER = Color3.fromRGB(29, 29, 35),
-}
+local COLORS = Theme.colors
+
+function Theme.ink(color)
+	local function linear(value)
+		return value <= 0.04045 and value / 12.92 or ((value + 0.055) / 1.055) ^ 2.4
+	end
+	local luminance = 0.2126 * linear(color.R) + 0.7152 * linear(color.G) + 0.0722 * linear(color.B)
+	return luminance > 0.179 and Color3.new(0, 0, 0) or Color3.new(1, 1, 1)
+end
+
+function Theme.recolor()
+	local bg = Color3.fromHex(Theme.background)
+	local accent = Color3.fromHex(Theme.accent)
+	local ink = Theme.ink(bg)
+	local function surface(amount) return bg:Lerp(ink, amount) end
+	COLORS.BG = bg
+	COLORS.TOP = surface(0.035)
+	COLORS.SIDE = surface(0.025)
+	COLORS.PANEL = surface(0.035)
+	COLORS.PANEL2 = surface(0.07)
+	COLORS.INPUT = surface(0.015)
+	COLORS.STROKE = accent
+	COLORS.STROKE_SOFT = bg:Lerp(accent, 0.35)
+	COLORS.TEXT = Theme.ink(COLORS.PANEL)
+	COLORS.SUB = COLORS.TOP:Lerp(Theme.ink(COLORS.TOP), 0.83)
+	COLORS.ON = accent
+	COLORS.OFF = surface(0.10)
+	COLORS.ACCENT = accent
+	COLORS.ON_TEXT = Theme.ink(accent)
+	COLORS.OFF_TEXT = Theme.ink(COLORS.OFF)
+	COLORS.TAB = COLORS.SIDE
+	COLORS.TAB_ACTIVE = bg:Lerp(accent, 0.24)
+	COLORS.TAB_TEXT = Theme.ink(COLORS.TAB_ACTIVE)
+	COLORS.DIVIDER = COLORS.STROKE_SOFT
+	for _, binding in ipairs(Theme.bindings) do
+		binding.object[binding.property] = COLORS[binding.role]
+	end
+	for _, gradient in ipairs(Theme.gradients) do
+		gradient.Color = ColorSequence.new(COLORS.PANEL, COLORS.PANEL2)
+	end
+end
+Theme.recolor()
 
 local function mk(className, props)
 	local object = Instance.new(className)
 	for key, value in pairs(props or {}) do
-		object[key] = value
+		if type(value) == "string" and (key:match("Color3$") or key == "Color") and COLORS[value] then
+			table.insert(Theme.bindings, { object = object, property = key, role = value })
+			object[key] = COLORS[value]
+		else
+			object[key] = value
+		end
 	end
 	return object
 end
@@ -2941,12 +3136,13 @@ local function addStroke(object, color, transparency)
 	})
 end
 
-local function addGradient(object, firstColor, secondColor)
+local function addGradient(object)
 	local gradient = mk("UIGradient", {
 		Parent = object,
 		Rotation = 90,
 	})
-	gradient.Color = ColorSequence.new(firstColor, secondColor)
+	table.insert(Theme.gradients, gradient)
+	gradient.Color = ColorSequence.new(COLORS.PANEL, COLORS.PANEL2)
 end
 
 local function keyName(keyCode)
@@ -2973,23 +3169,30 @@ local gui = mk("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 })
 
+local window = {}
+window.frame = mk("Frame", {
+	Name = "HubWindow",
+	Parent = gui,
+	Size = UDim2.fromOffset(980, 620),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+})
 local main = mk("Frame", {
 	Name = "MainFrame",
-	Parent = gui,
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
+	Parent = window.frame,
 	Size = UDim2.fromOffset(980, 620),
-	BackgroundColor3 = COLORS.BG,
+	BackgroundColor3 = "BG",
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 })
 addCorner(main, 14)
-addStroke(main, COLORS.STROKE, 0)
+addStroke(main, "STROKE", 0)
+window.scale = mk("UIScale", { Parent = main, Scale = 1 })
 
 mk("Frame", {
 	Parent = main,
 	Size = UDim2.fromScale(1, 1),
-	BackgroundColor3 = COLORS.BG,
+	BackgroundColor3 = "BG",
 	BackgroundTransparency = 0.08,
 	BorderSizePixel = 0,
 	ZIndex = 2,
@@ -2999,19 +3202,51 @@ local topBar = mk("Frame", {
 	Name = "TopBar",
 	Parent = main,
 	Size = UDim2.new(1, 0, 0, 64),
-	BackgroundColor3 = COLORS.TOP,
+	BackgroundColor3 = "TOP",
 	BackgroundTransparency = 0,
 	BorderSizePixel = 0,
 	ZIndex = 3,
 })
 
-mk("ImageLabel", {
+-- A little pixel-art wedge, drawn locally so it also works without image assets.
+local function cheeseBadge(parent, position)
+	local badge = mk("Frame", {
+		Name = "CheeseBadge", Parent = parent, Position = position,
+		Size = UDim2.fromOffset(40, 40), BackgroundColor3 = "TAB_ACTIVE",
+		BorderSizePixel = 0, ZIndex = 5,
+	})
+	addCorner(badge, 10)
+	addStroke(badge, "STROKE_SOFT", 0.15)
+	local function pixels(x, y, w, h, color)
+		mk("Frame", {
+			Parent = badge, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h),
+			BackgroundColor3 = color, BorderSizePixel = 0, ZIndex = 6,
+		})
+	end
+	local top = Color3.fromRGB(255, 221, 104)
+	local face = Color3.fromRGB(255, 179, 41)
+	local rind = Color3.fromRGB(165, 85, 18)
+	pixels(24, 8, 8, 3, top)
+	pixels(18, 11, 14, 3, top)
+	pixels(12, 14, 20, 3, top)
+	pixels(6, 17, 26, 3, top)
+	pixels(6, 20, 26, 9, face)
+	pixels(6, 29, 26, 2, rind)
+	pixels(11, 22, 4, 3, rind)
+	pixels(22, 25, 3, 3, rind)
+	pixels(26, 15, 3, 2, face)
+	return badge
+end
+
+cheeseBadge(topBar, UDim2.fromOffset(16, 12))
+
+mk("Frame", {
 	Parent = topBar,
-	Position = UDim2.new(0, 12, 0, 5),
-	Size = UDim2.fromOffset(51, 51),
-	BackgroundTransparency = 1,
-	Image = "rbxthumb://type=Asset&id=78750659030501&w=150&h=150",
-	ScaleType = Enum.ScaleType.Fit,
+	Position = UDim2.new(0, 0, 1, -1),
+	Size = UDim2.new(1, 0, 0, 1),
+	BackgroundColor3 = "STROKE",
+	BackgroundTransparency = 0.45,
+	BorderSizePixel = 0,
 	ZIndex = 5,
 })
 
@@ -3020,8 +3255,8 @@ mk("TextLabel", {
 	Position = UDim2.new(0, 74, 0, 10),
 	Size = UDim2.new(0, 340, 0, 24),
 	BackgroundTransparency = 1,
-	Text = IS_MAIN_HUB and "CheddarCheeseHub | Verfall" or "CheddarCheeseHub Split | Verfall",
-	TextColor3 = COLORS.TEXT,
+	Text = IS_MAIN_HUB and "Cheddar Cheese Hub" or "Cheddar Cheese Hub | Utility",
+	TextColor3 = "TEXT",
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.GothamBold,
 	TextSize = 20,
@@ -3030,11 +3265,11 @@ mk("TextLabel", {
 
 mk("TextLabel", {
 	Parent = topBar,
-	Position = UDim2.new(0, 67, 0, 35),
+	Position = UDim2.new(0, 74, 0, 35),
 	Size = UDim2.new(0, 340, 0, 18),
 	BackgroundTransparency = 1,
-	Text = IS_MAIN_HUB and "Main AOT CC Cheating Hub" or "Utility AOT CC Cheating Hub",
-	TextColor3 = COLORS.SUB,
+	Text = IS_MAIN_HUB and "MAIN EDITION" or "UTILITY EDITION",
+	TextColor3 = "SUB",
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.Gotham,
 	TextSize = 11,
@@ -3046,43 +3281,43 @@ searchBox = mk("TextBox", {
 	Parent = topBar,
 	Position = UDim2.new(0, 420, 0, 12),
 	Size = UDim2.new(1, -500, 0, 40),
-	BackgroundColor3 = COLORS.INPUT,
+	BackgroundColor3 = "INPUT",
 	BorderSizePixel = 0,
 	PlaceholderText = "Search",
 	Text = "",
-	TextColor3 = COLORS.TEXT,
-	PlaceholderColor3 = COLORS.SUB,
+	TextColor3 = "TEXT",
+	PlaceholderColor3 = "SUB",
 	ClearTextOnFocus = false,
 	Font = Enum.Font.GothamSemibold,
 	TextSize = 14,
 	ZIndex = 5,
 })
 addCorner(searchBox, 8)
-addStroke(searchBox, COLORS.STROKE_SOFT, 0.35)
+addStroke(searchBox, "STROKE_SOFT", 0.35)
 
 local closeButton = mk("TextButton", {
 	Name = "Close",
 	Parent = topBar,
 	Position = UDim2.new(1, -48, 0, 14),
 	Size = UDim2.fromOffset(32, 32),
-	BackgroundColor3 = COLORS.PANEL2,
+	BackgroundColor3 = "PANEL2",
 	BorderSizePixel = 0,
 	Text = "X",
-	TextColor3 = COLORS.TEXT,
+	TextColor3 = "TEXT",
 	Font = Enum.Font.GothamBold,
 	TextSize = 14,
 	AutoButtonColor = false,
 	ZIndex = 4,
 })
 addCorner(closeButton, 10)
-addStroke(closeButton, COLORS.STROKE_SOFT, 0.1)
+addStroke(closeButton, "STROKE_SOFT", 0.1)
 
 local sidebar = mk("Frame", {
 	Name = "Sidebar",
 	Parent = main,
 	Position = UDim2.new(0, 0, 0, 64),
 	Size = UDim2.new(0, 220, 1, -64),
-	BackgroundColor3 = COLORS.SIDE,
+	BackgroundColor3 = "SIDE",
 	BackgroundTransparency = 0,
 	BorderSizePixel = 0,
 	ZIndex = 3,
@@ -3094,7 +3329,7 @@ mk("TextLabel", {
 	Size = UDim2.new(1, -36, 0, 18),
 	BackgroundTransparency = 1,
 	Text = "Navigation",
-	TextColor3 = COLORS.SUB,
+	TextColor3 = "SUB",
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.GothamBold,
 	TextSize = 11,
@@ -3116,11 +3351,6 @@ local state = {
 	Capturing = nil,
 	CaptureSetter = nil,
 	CaptureRefresh = nil,
-	Dragging = false,
-	DragStart = nil,
-	StartPosition = nil,
-	DragDelta = Vector3.zero,
-	DragDirty = false,
 	SearchRecords = {},
 	CardRecords = {},
 	ApplyingSearch = false,
@@ -3138,7 +3368,7 @@ local function createPage(name)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,
-		ScrollBarImageColor3 = COLORS.ACCENT,
+		ScrollBarImageColor3 = "ACCENT",
 		Visible = false,
 		CanvasSize = UDim2.new(),
 		ZIndex = 3,
@@ -3149,7 +3379,14 @@ local function createPage(name)
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	})
 	trackConnection(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
+		-- Canvas offsets use logical units even when the window is scaled.
+		local height = 0
+		for _, card in ipairs(page:GetChildren()) do
+			if card:IsA("Frame") and card.Visible then
+				height += card.Size.Y.Offset + layout.Padding.Offset
+			end
+		end
+		page.CanvasSize = UDim2.fromOffset(0, math.max(0, height - layout.Padding.Offset) + 12)
 	end))
 	pages[name] = page
 	return page
@@ -3159,7 +3396,7 @@ function setActiveTab(name)
 	for pageName, tab in pairs(tabs) do
 		local active = pageName == name
 		tab.BackgroundColor3 = active and COLORS.TAB_ACTIVE or COLORS.TAB
-		tab.TextColor3 = active and COLORS.TEXT or COLORS.SUB
+		tab.TextColor3 = active and COLORS.TAB_TEXT or COLORS.SUB
 	end
 end
 
@@ -3235,10 +3472,10 @@ local function createTab(name, index)
 		Parent = sidebar,
 		Position = UDim2.new(0, 12, 0, 54 + (index - 1) * 46),
 		Size = UDim2.new(1, -24, 0, 38),
-		BackgroundColor3 = COLORS.TAB,
+		BackgroundColor3 = "TAB",
 		BorderSizePixel = 0,
 		Text = "   " .. name,
-		TextColor3 = COLORS.SUB,
+		TextColor3 = "SUB",
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Enum.Font.GothamBold,
 		TextSize = 13,
@@ -3256,14 +3493,14 @@ local function createCard(parent, titleText, height)
 	local card = mk("Frame", {
 		Parent = parent,
 		Size = UDim2.new(1, -6, 0, height),
-		BackgroundColor3 = COLORS.PANEL,
+		BackgroundColor3 = Color3.new(1, 1, 1),
 		BackgroundTransparency = 0,
 		BorderSizePixel = 0,
 		ZIndex = 4,
 	})
 	addCorner(card, 8)
-	addStroke(card, COLORS.STROKE_SOFT, 0.22)
-	addGradient(card, COLORS.PANEL, COLORS.PANEL2)
+	addStroke(card, "STROKE_SOFT", 0.22)
+	addGradient(card)
 	local pageName = parent and parent.Name and parent.Name:gsub("Page$", "") or ""
 	local record = {
 		Card = card,
@@ -3278,7 +3515,7 @@ local function createCard(parent, titleText, height)
 		Size = UDim2.new(1, -36, 0, 22),
 		BackgroundTransparency = 1,
 		Text = titleText,
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Enum.Font.GothamBold,
 		TextSize = 15,
@@ -3287,7 +3524,7 @@ local function createCard(parent, titleText, height)
 	return card
 end
 
-local function label(parent, y, text)
+local function label(parent, y, text, colorRole)
 	appendSearchText(parent, text)
 	return mk("TextLabel", {
 		Parent = parent,
@@ -3295,7 +3532,7 @@ local function label(parent, y, text)
 		Size = UDim2.new(0.54, 0, 0, 30),
 		BackgroundTransparency = 1,
 		Text = text,
-		TextColor3 = COLORS.SUB,
+		TextColor3 = colorRole or "SUB",
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
@@ -3334,10 +3571,10 @@ local function createToggle(parent, y, text, getter, setter)
 		Parent = parent,
 		Position = UDim2.new(1, -104, 0, y + 2),
 		Size = UDim2.fromOffset(82, 27),
-		BackgroundColor3 = COLORS.OFF,
+		BackgroundColor3 = "OFF",
 		BorderSizePixel = 0,
 		Text = "",
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		AutoButtonColor = false,
@@ -3352,6 +3589,7 @@ local function createToggle(parent, y, text, getter, setter)
 		button.Text = enabled and "ON" or "OFF"
 		TweenService:Create(button, TweenInfo.new(0.14), {
 			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
+			TextColor3 = enabled and COLORS.ON_TEXT or COLORS.OFF_TEXT,
 		}):Play()
 	end
 	trackConnection(button.MouseButton1Click:Connect(function()
@@ -3378,34 +3616,50 @@ local function createTextBox(parent, y, text, value, callback)
 		Parent = parent,
 		Position = UDim2.new(1, -222, 0, y + 2),
 		Size = UDim2.fromOffset(200, 28),
-		BackgroundColor3 = COLORS.INPUT,
+		BackgroundColor3 = "INPUT",
 		BorderSizePixel = 0,
 		Text = tostring(value),
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		ClearTextOnFocus = false,
 		Font = Enum.Font.GothamSemibold,
 		TextSize = 12,
 		ZIndex = 5,
 	})
 	addCorner(box, 5)
-	addStroke(box, COLORS.STROKE_SOFT, 0.28)
-	trackConnection(box.FocusLost:Connect(function()
-		callback(box.Text, box)
-		SaveConfig()
-	end))
+	addStroke(box, "STROKE_SOFT", 0.28)
+	if callback then
+		trackConnection(box.FocusLost:Connect(function()
+			callback(box.Text, box)
+			SaveConfig()
+		end))
+	end
 	return box
 end
 
 
-local function createGearStatRow(parent, y, statName)
-	appendSearchText(parent, statName)
+local function createGearStatRow(parent, y, statName, title, hint)
+	appendSearchText(parent, statName .. " " .. title .. " " .. hint)
 	mk("TextLabel", {
 		Parent = parent,
 		Position = UDim2.new(0, 18, 0, y),
-		Size = UDim2.new(1, -230, 0, 30),
+		Size = UDim2.new(1, -238, 0, 20),
 		BackgroundTransparency = 1,
-		Text = statName,
-		TextColor3 = COLORS.SUB,
+		Text = title,
+		TextColor3 = "TEXT",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 14,
+		ZIndex = 5,
+	})
+	mk("TextLabel", {
+		Parent = parent,
+		Position = UDim2.new(0, 18, 0, y + 20),
+		Size = UDim2.new(1, -238, 0, 30),
+		BackgroundTransparency = 1,
+		Text = hint,
+		TextWrapped = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextColor3 = "SUB",
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Font = Enum.Font.Gotham,
 		TextSize = 12,
@@ -3416,27 +3670,27 @@ local function createGearStatRow(parent, y, statName)
 		Parent = parent,
 		Position = UDim2.new(1, -202, 0, y + 2),
 		Size = UDim2.fromOffset(96, 28),
-		BackgroundColor3 = COLORS.INPUT,
+		BackgroundColor3 = "INPUT",
 		BorderSizePixel = 0,
 		Text = tostring(Config.GearStatValues[statName] or GEAR_STAT_VALUES[statName]),
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		ClearTextOnFocus = false,
 		Font = Enum.Font.GothamSemibold,
 		TextSize = 12,
 		ZIndex = 5,
 	})
 	addCorner(box, 5)
-	addStroke(box, COLORS.STROKE_SOFT, 0.28)
+	addStroke(box, "STROKE_SOFT", 0.28)
 	gearValueBoxes[statName] = box
 
 	local button = mk("TextButton", {
 		Parent = parent,
 		Position = UDim2.new(1, -94, 0, y + 2),
 		Size = UDim2.fromOffset(72, 27),
-		BackgroundColor3 = COLORS.OFF,
+		BackgroundColor3 = "OFF",
 		BorderSizePixel = 0,
 		Text = "",
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		AutoButtonColor = false,
@@ -3450,6 +3704,7 @@ local function createGearStatRow(parent, y, statName)
 		box.Text = tostring(Config.GearStatValues[statName] or GEAR_STAT_VALUES[statName])
 		TweenService:Create(button, TweenInfo.new(0.14), {
 			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
+			TextColor3 = enabled and COLORS.ON_TEXT or COLORS.OFF_TEXT,
 		}):Play()
 	end
 
@@ -3474,23 +3729,28 @@ local function createGearStatRow(parent, y, statName)
 	table.insert(configRefreshers, refresh)
 	return refresh
 end
-local function createStatToggleBox(parent, y, statName)
-	label(parent, y, statName)
+local function createStatToggleBox(parent, y, statName, title, hint)
+	label(parent, y, title or statName, hint and "TEXT" or "SUB")
+	if hint then
+		appendSearchText(parent, statName)
+		local detail = label(parent, y + 26, hint)
+		detail.Size = UDim2.new(1, -36, 0, 21)
+	end
 	local box = mk("TextBox", {
 		Parent = parent,
 		Position = UDim2.new(1, -222, 0, y + 2),
 		Size = UDim2.fromOffset(110, 28),
-		BackgroundColor3 = COLORS.INPUT,
+		BackgroundColor3 = "INPUT",
 		BorderSizePixel = 0,
 		Text = tostring(Config.CustomStats[statName]),
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		ClearTextOnFocus = false,
 		Font = Enum.Font.GothamSemibold,
 		TextSize = 12,
 		ZIndex = 5,
 	})
 	addCorner(box, 5)
-	addStroke(box, COLORS.STROKE_SOFT, 0.28)
+	addStroke(box, "STROKE_SOFT", 0.28)
 	statValueBoxes[statName] = box
 	trackConnection(box.FocusLost:Connect(function()
 		local value = tonumber(box.Text)
@@ -3506,10 +3766,10 @@ local function createStatToggleBox(parent, y, statName)
 		Parent = parent,
 		Position = UDim2.new(1, -104, 0, y + 2),
 		Size = UDim2.fromOffset(82, 27),
-		BackgroundColor3 = COLORS.OFF,
+		BackgroundColor3 = "OFF",
 		BorderSizePixel = 0,
 		Text = "",
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		AutoButtonColor = false,
@@ -3523,6 +3783,7 @@ local function createStatToggleBox(parent, y, statName)
 		button.Text = enabled and "ON" or "OFF"
 		TweenService:Create(button, TweenInfo.new(0.14), {
 			BackgroundColor3 = enabled and COLORS.ON or COLORS.OFF,
+			TextColor3 = enabled and COLORS.ON_TEXT or COLORS.OFF_TEXT,
 		}):Play()
 	end
 
@@ -3544,24 +3805,26 @@ local function createKeybind(parent, y, text, getter, setter)
 		Parent = parent,
 		Position = UDim2.new(1, -184, 0, y + 2),
 		Size = UDim2.fromOffset(162, 28),
-		BackgroundColor3 = COLORS.INPUT,
+		BackgroundColor3 = "INPUT",
 		BorderSizePixel = 0,
 		Text = keyName(getter()),
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "TEXT",
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
 	addCorner(button, 5)
-	addStroke(button, COLORS.STROKE_SOFT, 0.28)
+	addStroke(button, "STROKE_SOFT", 0.28)
 	local function refresh()
 		if state.Capturing == button then
 			button.Text = "PRESS A KEY"
 			button.BackgroundColor3 = COLORS.ON
+			button.TextColor3 = COLORS.ON_TEXT
 		else
 			button.Text = keyName(getter())
 			button.BackgroundColor3 = COLORS.INPUT
+			button.TextColor3 = COLORS.TEXT
 		end
 	end
 	trackConnection(button.MouseButton1Click:Connect(function()
@@ -3575,29 +3838,33 @@ local function createKeybind(parent, y, text, getter, setter)
 	return refresh
 end
 
-local function createButton(parent, y, text, callback)
-	label(parent, y, text)
+local function createButton(parent, y, text, callback, caption)
+	label(parent, y, caption or text)
 	local button = mk("TextButton", {
 		Parent = parent,
 		Position = UDim2.new(1, -184, 0, y + 2),
 		Size = UDim2.fromOffset(162, 28),
-		BackgroundColor3 = COLORS.ACCENT,
+		BackgroundColor3 = "ACCENT",
 		BorderSizePixel = 0,
 		Text = text,
-		TextColor3 = COLORS.TEXT,
+		TextColor3 = "ON_TEXT",
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		AutoButtonColor = false,
 		ZIndex = 5,
 	})
 	addCorner(button, 5)
-	addStroke(button, COLORS.STROKE, 0.15)
+	addStroke(button, "STROKE", 0.15)
 	trackConnection(button.MouseButton1Click:Connect(callback))
 	return button
 end
 
 local refreshPlayerESPBind
 
+-- Keep the UI construction and runtime bindings in their own function scope.
+-- The main chunk already has close to Luau's 200-active-local limit, so declaring
+-- page/card/loop locals directly in that chunk causes "local/axis/label limit 200".
+;(function()
 local mainPage = IS_MAIN_HUB and createPage("Main") or nil
 local attrPage = IS_MAIN_HUB and createPage("Attributes") or nil
 local miscPage = createPage("Misc")
@@ -3734,7 +4001,8 @@ end, function(value)
 	end
 end)
 
-local attrCard = createCard(attrPage, "Attribute Controls", 92)
+local attrCard = createCard(attrPage, "Attribute Controls", 120)
+label(attrCard, 80, "Movement and gas settings are on the Gear tab.").Size = UDim2.new(1, -36, 0, 28)
 createToggle(attrCard, 50, "Enable Attribute Mods", function()
 	return Config.AttributesEnabled
 end, function(value)
@@ -3743,14 +4011,6 @@ end, function(value)
 		enableVisibleCustomStats()
 		refreshConfigControls()
 	end
-	applyCustomStats()
-end)
-
-local odmgAttrCard = createCard(attrPage, "ODMG Movement Attributes", 94)
-createToggle(odmgAttrCard, 50, "Enable ODMG Movement Stats", function()
-	return Config.ODMGAttributesEnabled
-end, function(value)
-	Config.ODMGAttributesEnabled = value
 	applyCustomStats()
 end)
 
@@ -3764,16 +4024,94 @@ end
 if Config.AttributesEnabled and not anyCustomStatEnabled then
 	enableVisibleCustomStats()
 end
-local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #VISIBLE_ATTRIBUTE_STATS)
-for index, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
-	Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
-	createStatToggleBox(statCard, 42 + index * 36, statName)
+do
+	local rows = {
+		{"OdmVeloCap", "Player ODM speed cap", "Also supplies the number used by the horizontal speed limiter below."},
+		{"VelocityScaling", "Velocity scaling", "Changes the player’s velocity scaling stat. The game decides how to use it."},
+		{"RunSpeed", "Run speed", "Changes the player’s running stat independently of hook travel speed."},
+		{"GasConservation", "Gas conservation", "Player gas stat. Works with Attribute Mods even when movement stats are off."},
+	}
+	local moved = {}
+	for _, row in ipairs(rows) do moved[row[1]] = true end
+	local remaining = {}
+	for _, statName in ipairs(VISIBLE_ATTRIBUTE_STATS) do
+		Config.CustomStatsEnabled[statName] = Config.CustomStatsEnabled[statName] == true
+		if not moved[statName] then table.insert(remaining, statName) end
+	end
+	local statCard = createCard(attrPage, "Custom Stats", 52 + 38 * #remaining)
+	for index, statName in ipairs(remaining) do
+		createStatToggleBox(statCard, 42 + (index - 1) * 38, statName)
+	end
+
+	local card = createCard(gearPage, "Player movement & gas", 410)
+	card.LayoutOrder = #GEAR_SECTIONS + 1
+	local help = label(card, 38, "Turn on Attribute Mods in Attributes, then enable the player stats you want here.")
+	help.Size = UDim2.new(1, -36, 0, 26)
+	createToggle(card, 72, "Enable player movement stats", function()
+		return Config.ODMGAttributesEnabled
+	end, function(value)
+		Config.ODMGAttributesEnabled = value
+		applyCustomStats()
+	end)
+	for index, row in ipairs(rows) do
+		createStatToggleBox(card, 110 + (index - 1) * 56, row[1], row[2], row[3])
+	end
+	createToggle(card, 340, "Limit horizontal speed", function()
+		return Config.VelocityCapperEnabled
+	end, function(value)
+		Config.VelocityCapperEnabled = value
+		if value then
+			rebuildVelocityCapWatch(localPlayer.Character)
+			applyVelocityCap()
+		end
+	end)
+	appendSearchText(card, "Velocity Capper Maximum Velocity")
+	local limiterNote = label(card, 370, "Uses Player ODM speed cap even with Attribute Mods off. Vertical speed is unaffected.")
+	limiterNote.Size = UDim2.new(1, -36, 0, 26)
 end
-local gearCard = createCard(gearPage, "ODM Class Gear", 72 + 42 * #GEAR_STAT_ORDER)
-for index, statName in ipairs(GEAR_STAT_ORDER) do
-	createGearStatRow(gearCard, 48 + (index - 1) * 42, statName)
+for order, section in ipairs(GEAR_SECTIONS) do
+	local card = createCard(gearPage, section.title, 46 + 56 * #section.rows)
+	card.LayoutOrder = order
+	appendSearchText(card, "ODM Class Gear")
+	for _, column in ipairs({{"Value", -202, 96}, {"Use value", -94, 72}}) do
+		mk("TextLabel", {
+			Parent = card,
+			Position = UDim2.new(1, column[2], 0, 12),
+			Size = UDim2.fromOffset(column[3], 22),
+			BackgroundTransparency = 1,
+			Text = column[1],
+			TextColor3 = "SUB",
+			Font = Enum.Font.Gotham,
+			TextSize = 12,
+			ZIndex = 5,
+		})
+	end
+	for index, row in ipairs(section.rows) do
+		createGearStatRow(card, 42 + (index - 1) * 56, row[1], row[2], row[3])
+	end
 end
 
+
+do
+	local card = createCard(gearPage, "Blade damage", 168)
+	card.LayoutOrder = #GEAR_SECTIONS + 2
+	createToggle(card, 44, "Use blade damage multiplier", function()
+		return Config.GearBladeDamageEnabled == true
+	end, function(value)
+		Config.GearBladeDamageEnabled = value
+		bladeBoost.sync()
+	end)
+	local box = createTextBox(card, 84, "Damage multiplier", Config.GearBladeDamageMultiplier, function(text, field)
+		Config.GearBladeDamageMultiplier = bladeBoost.multiplier(text) or Config.GearBladeDamageMultiplier
+		field.Text = tostring(Config.GearBladeDamageMultiplier)
+		bladeBoost.sync()
+	end)
+	table.insert(configRefreshers, function()
+		box.Text = tostring(bladeBoost.multiplier(Config.GearBladeDamageMultiplier) or 2)
+	end)
+	local hint = label(card, 122, "1 = normal damage. 2 = double damage.")
+	hint.Size = UDim2.new(1, -36, 0, 30)
+end
 
 local safetyCard = createCard(miscPage, "Fall Damage", 94)
 createToggle(safetyCard, 50, "Enable No Fall Damage", function()
@@ -3852,25 +4190,6 @@ end)
 
 
 if IS_MAIN_HUB then
-local velocityCard = createCard(miscPage, "Velocity Capper", 132)
-createToggle(velocityCard, 50, "Enable Velocity Capper", function()
-	return Config.VelocityCapperEnabled
-end, function(value)
-	Config.VelocityCapperEnabled = value
-	if value then
-		rebuildVelocityCapWatch(localPlayer.Character)
-		applyVelocityCap()
-	end
-end)
-createTextBox(velocityCard, 88, "Maximum Velocity", Config.CustomStats.OdmVeloCap, function(text, box)
-	local value = tonumber(text)
-	if value and value > 0 then
-		Config.CustomStats.OdmVeloCap = value
-	end
-	box.Text = tostring(Config.CustomStats.OdmVeloCap)
-	applyVelocityCap()
-end)
-
 do
 local weaponCard = createCard(pages.Firearms, "Weapon Modifications", 170)
 createToggle(weaponCard, 50, "Enable Dmg mult", function()
@@ -4055,6 +4374,34 @@ createTextBox(bladeModsCard, 202, "Human Damage Mult", Config.BladeHumanMultipli
 end)
 end
 
+do
+	local card = createCard(settingsPage, "Color Theme", 260)
+	cheeseBadge(card, UDim2.new(1, -62, 0, 6))
+	local accentBox = createTextBox(card, 52, "Accent color", "#" .. Theme.accent)
+	local baseBox = createTextBox(card, 90, "Background color", "#" .. Theme.background)
+	local status = label(card, 220, "Enter a six-digit hex color, like #FFC04D.")
+	status.Size = UDim2.new(1, -36, 0, 30)
+
+	local function applyTheme(accent, background)
+		if not accent or not background then
+			status.Text = "Use six hex digits for each color, like #FFC04D."
+			return
+		end
+		Theme.accent, Theme.background = accent, background
+		accentBox.Text, baseBox.Text = "#" .. accent, "#" .. background
+		Theme.recolor()
+		refreshConfigControls()
+		applyFeatureSearch()
+		status.Text = SaveConfigSettings() and "Theme saved." or "Theme applied for this session. Settings could not be saved."
+	end
+	createButton(card, 136, "Apply Theme", function()
+		applyTheme(Theme.hex(accentBox.Text), Theme.hex(baseBox.Text))
+	end, "Use these colors")
+	createButton(card, 176, "Restore Cheddar", function()
+		applyTheme(Theme.defaults.Accent, Theme.defaults.Background)
+	end, "Original cheese palette")
+end
+
 local interfaceCard = createCard(settingsPage, "Interface", 96)
 local refreshToggleBind = createKeybind(interfaceCard, 50, "Open / Close Key", function()
 	return Config.ToggleUIKey
@@ -4084,6 +4431,7 @@ local function applyConfigEffects()
 
 	if IS_MAIN_HUB then
 		applyGearMods()
+		bladeBoost.sync()
 	end
 
 	if IS_MAIN_HUB and Config.NoFallDamageEnabled then
@@ -4166,8 +4514,8 @@ mk("TextLabel", {
 	Position = UDim2.new(0, 18, 0, 48),
 	Size = UDim2.new(1, -36, 0, 30),
 	BackgroundTransparency = 1,
-	Text = "Use the X above to hide the hub. Use your open / close key to return.",
-	TextColor3 = COLORS.SUB,
+	Text = "Drag any corner to resize. Drag the title bar to move. Use X to hide the hub.",
+	TextColor3 = "SUB",
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Font = Enum.Font.Gotham,
 	TextSize = 12,
@@ -4182,10 +4530,12 @@ end)
 
 state.SetWindowOpen = function(open)
 	state.Open = open
-	main.Visible = open
+	window.frame.Visible = open
+	if not open then window.gesture = nil end
 end
 
 state.UnloadHub = function()
+	bladeBoost.stop()
 	NapeFeature.RestoreScreenShake()
 	_G[RUN_ID_KEY] = (_G[RUN_ID_KEY] or CURRENT_RUN_ID) + 1
 	applyDefaultDisabledConfig()
@@ -4243,41 +4593,92 @@ trackConnection(closeButton.MouseButton1Click:Connect(function()
 	state.SetWindowOpen(false)
 end))
 
-trackConnection(topBar.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		state.Dragging = true
-		state.DragStart = input.Position
-		state.StartPosition = main.Position
-		state.DragDelta = Vector3.zero
-		state.DragDirty = false
-		trackConnection(input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				state.Dragging = false
-				state.DragDirty = false
-			end
-		end))
-	end
-end))
+function window.setRect(x, y, width, height)
+	window.x, window.y, window.width, window.height = x, y, width, height
+	window.frame.Position = UDim2.fromOffset(x, y)
+	window.frame.Size = UDim2.fromOffset(width, height)
+	local scale = math.min(1, width / 980, height / 620)
+	window.scale.Scale = scale
+	main.Size = UDim2.fromOffset(math.ceil(width / scale), math.ceil(height / scale))
+end
 
-trackTransientConnection(UserInputService.InputChanged:Connect(function(input)
-	if state.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-		state.DragDelta = input.Position - state.DragStart
-		state.DragDirty = true
-	end
-end))
+function window.fit()
+	local area = gui.AbsoluteSize
+	if area.X <= 0 or area.Y <= 0 then return end
+	window.gesture = nil
+	local width = math.min(math.max(window.width or 980, 440), area.X)
+	local height = math.min(math.max(window.height or 620, 280), area.Y)
+	local x = math.clamp(window.x or (area.X - width) / 2, 0, area.X - width)
+	local y = math.clamp(window.y or (area.Y - height) / 2, 0, area.Y - height)
+	window.setRect(x, y, width, height)
+end
 
-trackTransientConnection(RunService.RenderStepped:Connect(function()
-	if state.Dragging and state.DragDirty and state.StartPosition then
-		local delta = state.DragDelta
-		main.Position = UDim2.new(
-			state.StartPosition.X.Scale,
-			state.StartPosition.X.Offset + delta.X,
-			state.StartPosition.Y.Scale,
-			state.StartPosition.Y.Offset + delta.Y
-		)
-		state.DragDirty = false
+-- Resize one axis from its grabbed edge, keeping the opposite edge stationary.
+function window.resizeAxis(origin, length, delta, side, limit, minimum)
+	if side == 0 then return math.clamp(origin + delta, 0, limit - length), length end
+	if side < 0 then
+		local far = origin + length
+		local start = math.clamp(origin + delta, 0, far - math.min(minimum, length))
+		return start, far - start
 	end
+	return origin, math.clamp(length + delta, math.min(minimum, length), limit - origin)
+end
+
+function window.begin(input, sideX, sideY)
+	local kind = input.UserInputType
+	if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then return end
+	if window.gesture or not window.width or not window.frame.Visible then return end
+	window.gesture = { input = input, start = input.Position, sideX = sideX, sideY = sideY,
+		x = window.x, y = window.y, width = window.width, height = window.height }
+end
+
+do
+	for _, corner in ipairs({{-1, -1}, {1, -1}, {-1, 1}, {1, 1}}) do
+		local sx, sy = corner[1], corner[2]
+		local anchor = Vector2.new((sx + 1) / 2, (sy + 1) / 2)
+		local handle = mk("TextButton", {
+			Name = "ResizeCorner", Parent = window.frame, AnchorPoint = anchor,
+			Position = UDim2.fromScale(anchor.X, anchor.Y), Size = UDim2.fromOffset(20, 20),
+			Text = "", BackgroundTransparency = 1, AutoButtonColor = false, ZIndex = 20,
+		})
+		-- Two short strokes form a grip that stays visible at every window size.
+		for _, size in ipairs({Vector2.new(10, 2), Vector2.new(2, 10)}) do
+			mk("Frame", {
+				Parent = handle, AnchorPoint = anchor, Position = UDim2.new(anchor.X, -sx * 3, anchor.Y, -sy * 3),
+				Size = UDim2.fromOffset(size.X, size.Y), BackgroundColor3 = "ACCENT", BorderSizePixel = 0,
+			})
+		end
+		trackConnection(handle.InputBegan:Connect(function(input) window.begin(input, sx, sy) end))
+	end
+end
+
+trackConnection(topBar.InputBegan:Connect(function(input) window.begin(input, 0, 0) end))
+trackConnection(UserInputService.InputChanged:Connect(function(input)
+	local g = window.gesture
+	if not g then return end
+	if g.input.UserInputType == Enum.UserInputType.Touch then
+		if input ~= g.input then return end
+	elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
+		return
+	end
+	local delta = input.Position - g.start
+	local area = gui.AbsoluteSize
+	if area.X < g.x + g.width - 0.01 or area.Y < g.y + g.height - 0.01 then
+		window.fit()
+		return
+	end
+	local x, width = window.resizeAxis(g.x, g.width, delta.X, g.sideX, area.X, 440)
+	local y, height = window.resizeAxis(g.y, g.height, delta.Y, g.sideY, area.Y, 280)
+	window.setRect(x, y, width, height)
 end))
+trackConnection(UserInputService.InputEnded:Connect(function(input)
+	local g = window.gesture
+	if g and (input == g.input or (g.input.UserInputType == Enum.UserInputType.MouseButton1
+		and input.UserInputType == Enum.UserInputType.MouseButton1)) then window.gesture = nil end
+end))
+trackConnection(UserInputService.WindowFocusReleased:Connect(function() window.gesture = nil end))
+trackConnection(gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(window.fit))
+window.fit()
 
 trackTransientConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if state.Capturing and input.UserInputType == Enum.UserInputType.Keyboard then
@@ -4317,3 +4718,4 @@ if IS_MAIN_HUB then
 	task.spawn(startPlayerESP)
 end
 applyConfigEffects()
+end)()
