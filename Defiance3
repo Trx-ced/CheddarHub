@@ -1888,7 +1888,7 @@ do
 		UpSpeedBaseTwo = 90,
 		GasBoostVelocityCapBypass = 25,
 		ReelingVelocityCapBypass = 12,
-		VelocityCapsByAcceleration = {375, 375, 375, 375, 375},
+		VelocityCapsByAcceleration = {350, 350, 350, 350, 350},
 	}
 
 	local function cloneTable(value)
