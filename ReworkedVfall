@@ -3861,10 +3861,6 @@ end
 
 local refreshPlayerESPBind
 
--- Keep the UI construction and runtime bindings in their own function scope.
--- The main chunk already has close to Luau's 200-active-local limit, so declaring
--- page/card/loop locals directly in that chunk causes "local/axis/label limit 200".
-;(function()
 local mainPage = IS_MAIN_HUB and createPage("Main") or nil
 local attrPage = IS_MAIN_HUB and createPage("Attributes") or nil
 local miscPage = createPage("Misc")
@@ -4718,4 +4714,3 @@ if IS_MAIN_HUB then
 	task.spawn(startPlayerESP)
 end
 applyConfigEffects()
-end)()
